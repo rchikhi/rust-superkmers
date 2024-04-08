@@ -1,7 +1,6 @@
-#![feature(core_intrinsics)]
-#![feature(stdarch_x86_avx512)]
-
-use std::io::{Result};
+mod utils;
+pub mod naive;
+pub mod iterator1;
 
 // An iterator for getting superkmers out of a DNA sequence
 ///
@@ -22,5 +21,6 @@ use std::io::{Result};
 ///        }
 ///     }
 /// ```
+fn test() { }
 
 
