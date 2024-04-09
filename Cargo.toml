@@ -14,6 +14,7 @@ nthash32 = { git = "https://github.com/rchikhi/rust-nthash32"  }
 rust-seq2kminmers = { git = "https://github.com/rchikhi/rust-seq2kminmers" }
 rand = "^0.5"
 colored = "2.0.0"
+bio = "*" # for revcomp
 
 [dev-dependencies]
 criterion = "0.4.0"

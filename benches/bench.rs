@@ -11,7 +11,7 @@ use rust_seq2kminmers::{NtHashHPCIterator, NtHashSIMDIterator, HashMode};
 
 fn superkmers_bench(c: &mut Criterion) {
     let k = 31;
-    let m = 12;
+    let m = 8;
     let range = Uniform::from(0..4);
     let mut rng = rand::thread_rng();
     let seq_len = 150;
