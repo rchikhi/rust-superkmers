@@ -42,7 +42,7 @@ pub fn extract_superkmers(read: &[u8], k: usize, l: usize) -> Vec<Superkmer> {
     let mut start = 0;
     let mut end = k+1;
     let mut last_minimizer_pos = kmer_minimizers_pos[0];
-    let debug = true;
+    let debug = false;
     while end <= read_len {
         let kmer_minimizer_pos = kmer_minimizers_pos[end-k];
         let next_mm = has_two_minimizer_occ[end-k];

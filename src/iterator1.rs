@@ -67,14 +67,7 @@ impl<'a> Iterator for SuperkmersIterator<'a> {
      * or one that has a minimizer different from the one previously.
      * The following hash is the last l-mer of the k-mer*/
     fn next(&mut self) -> Option<Superkmer> {
-        let verbose = true;
-        // FIXME: there is one final issue i haven't solved yet
-        // RUST_BACKTRACE=1 bash run.sh test/minimizer_twice_in_kmer4.fa  --threads 16  -l 6 -k 9 --stats
-        // it's the case of two consecutive k-mers inside a superkmer, where one is the rc of the
-        // other: AGAGCTCTT - AAGAGCTCT. in this case we should break the superkmer and normalize,
-        // but how to detect that without computing the kmers or the minimizers explicitly?
-        // I think it can be fixed in post, when doing queries, check for both the forward and the
-        // reverse. All it does is add redundancy to the structure
+        let verbose = false;
         if self.done { return None; }
 
         let mut mpos = self.dq[0]-self.start;
@@ -114,15 +107,10 @@ impl<'a> Iterator for SuperkmersIterator<'a> {
                          std::str::from_utf8(&self.read[self.i..self.i+self.l]).unwrap().to_string());
             }
  
-            println!("old dq {:?}",self.dq);
-            
             // Remove elements from the back of the deque that are greater than the current element
             while !self.dq.is_empty() && self.buffer[self.dq[self.dq.len() - 1] % self.k] > hash {
-                println!("popping back");
-
                 self.dq.pop_back();
             }
-                println!("new dq {:?}",self.dq);
 
             let new_minimizer = self.dq.len() == 0;
 
