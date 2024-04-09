@@ -33,7 +33,7 @@ fn superkmers_bench(c: &mut Criterion) {
     |b: &mut Bencher, i: &String| {
         b.iter(|| {
             let iter = rust_superkmers::iterator1::SuperkmersIterator::new(i.as_bytes(), k, m);
-            let _res = iter.into_iter().collect::<Vec<rust_superkmers::iterator1::Superkmer>>(); 
+            let _res = iter.into_iter().collect::<Vec<rust_superkmers::Superkmer>>(); 
             black_box(_res);
     })});
 
@@ -41,7 +41,7 @@ fn superkmers_bench(c: &mut Criterion) {
     |b: &mut Bencher, i: &String| {
         b.iter(|| {
             let iter = rust_superkmers::naive::extract_superkmers(i.as_bytes(), k, m);
-            let _res = iter.into_iter().collect::<Vec<rust_superkmers::naive::Superkmer>>();
+            let _res = iter.into_iter().collect::<Vec<rust_superkmers::Superkmer>>();
             black_box(_res);
     })});
 

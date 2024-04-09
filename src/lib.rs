@@ -2,6 +2,14 @@ mod utils;
 pub mod naive;
 pub mod iterator1;
 
+#[derive(PartialEq, Eq, Hash, Debug)]
+pub struct Superkmer {
+    pub sequence: String,
+    pub minimizer: String,
+    pub mpos: usize,
+}
+
+
 // An iterator for getting superkmers out of a DNA sequence
 ///
 /// Parameters:
@@ -14,7 +22,7 @@ pub mod iterator1;
 /// ```
 ///     fn main() {
 ///        let seq = b"AACTGCACTGCACTGCACTGCACACTGCACTGCACTGCACTGCACACTGCACTGCACTGACTGCACTGCACTGCACTGCACTGCCTGC";
-///        let iter = SuperkmersIterator::new(seq, 10, 5, ).unwrap();
+///        let iter = rust_superkmers::iterator1::SuperkmersIterator::new(seq, 10, 5, );
 ///        for superkmer in iter
 ///        {
 ///            println!("superkmer: {:?}",superkmer);

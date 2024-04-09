@@ -21,3 +21,47 @@ fn switch_base(c: char) -> char {
     }
 }
 
+pub fn normalize_mpos(sequence: String, sequence_rc: String, minimizer: String, minimizer_rc: String, mpos: usize, l: usize, mm: bool)
+    -> (String, String, String, String, usize)
+{
+    let mut mpos = mpos;
+    let mut sequence = sequence;
+    let mut sequence_rc = sequence_rc;
+    let mut minimizer = minimizer;
+    let mut minimizer_rc = minimizer_rc;
+    // if multiple minimizers, explore whole seq until mpos, otherwise just normalize by looking at revcomp
+    if ! mm {
+        if sequence.len()-(mpos+l) < mpos {
+            (sequence, sequence_rc) = (sequence_rc, sequence);
+            (minimizer, minimizer_rc) = (minimizer_rc, minimizer);
+            mpos = sequence.len()-(mpos+l);
+        }
+        if sequence.len()-(mpos+l) == mpos && minimizer_rc < minimizer {
+            (sequence, sequence_rc) = (sequence_rc, sequence);
+            (minimizer, minimizer_rc) = (minimizer_rc, minimizer);
+        }
+    }
+    else
+    {
+        for i in 0..mpos {
+            let found_forward = sequence[i..i+l] == *minimizer  || sequence[i..i+l]  == *minimizer_rc;
+            let found_rc      = sequence_rc[i..i+l] == *minimizer  || sequence_rc[i..i+l]  == *minimizer_rc;
+            if found_forward || found_rc {
+                if found_forward && found_rc { 
+                    if sequence_rc < sequence { 
+                        (sequence, sequence_rc) = (sequence_rc, sequence);
+                        (minimizer, minimizer_rc) = (minimizer_rc, minimizer);
+                    }
+                } 
+                #[allow(unused_assignments)]
+                if found_rc {
+                    (sequence, sequence_rc) = (sequence_rc, sequence);
+                    (minimizer, minimizer_rc) = (minimizer_rc, minimizer);
+                }
+                mpos = i;
+                break;
+            }
+        }
+    }
+    (sequence, sequence_rc, minimizer, minimizer_rc, mpos)
+}

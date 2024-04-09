@@ -1,15 +1,8 @@
 use nthash::NtHashIterator;
-use crate::utils::revcomp;
+use crate::utils::{revcomp, normalize_mpos};
 use std::collections::VecDeque;
 use colored::Colorize;
- 
-
-#[derive(Debug)]
-pub struct Superkmer {
-    pub sequence: String,
-    pub minimizer: String,
-    pub mpos: usize,
-}
+use crate::Superkmer; 
 
 pub struct SuperkmersIterator<'a> {
     read: &'a [u8],
@@ -87,7 +80,7 @@ impl<'a> Iterator for SuperkmersIterator<'a> {
      * or one that has a minimizer different from the one previously.
      * The following hash is the last l-mer of the k-mer*/
     fn next(&mut self) -> Option<Superkmer> {
-        let verbose = false;
+        let verbose = true;
         // FIXME: there is one final issue i haven't solved yet
         // RUST_BACKTRACE=1 bash run.sh test/minimizer_twice_in_kmer4.fa  --threads 16  -l 6 -k 9 --stats
         // it's the case of two consecutive k-mers inside a superkmer, where one is the rc of the
@@ -122,11 +115,16 @@ impl<'a> Iterator for SuperkmersIterator<'a> {
             if minimizer_out_of_scope {
                 self.dq.pop_front();
             }
+            println!("new hash {}",hash);
+                println!("old dq {:?}",self.dq);
 
             // Remove elements from the back of the deque that are greater than the current element
             while !self.dq.is_empty() && self.buffer[self.dq[self.dq.len() - 1] % self.k] > hash {
+                println!("popping back");
+
                 self.dq.pop_back();
             }
+                println!("new dq {:?}",self.dq);
 
             // Testing if multiple minimizers are present
             if self.dq.len() > 0 && self.buffer[self.dq[0] % self.k] == hash {
@@ -164,44 +162,27 @@ impl<'a> Iterator for SuperkmersIterator<'a> {
 
         let mut sequence = std::str::from_utf8(&self.read[self.start..self.end-1]).unwrap().to_string();
         let mut sequence_rc = revcomp(&sequence);
-        if verbose { println!("new superkmer {} mpos {}",sequence,mpos); }
-        let minimizer =  sequence[mpos..mpos+self.l].to_string();
-        let minimizer_rc = revcomp(&minimizer);
-        if self.mm.is_some()  || minimizer == minimizer_rc { // in the double minimizer case, or if minimizer is its own rc, try to minimize mpos
-            if self.mm.is_some() {
-                if verbose { println!("{}: {}, minimizer {} dq {:?} buffer {:?}",
-                                      "multiple minimizers in kmer".red(),
-                                      sequence,minimizer,self.dq,self.buffer.clone().into_iter()
-                                      .map(|c| if c<usize::max_value() { c } else { 0 } ).collect::<Vec<usize>>());}
-            }
-            else {
-                if verbose { println!("{}: {}, minimizer {} minimizer_rc {}",
-                                      "minimizer is its own rc".red(),sequence,minimizer,minimizer_rc);
+        let mut minimizer =  sequence[mpos..mpos+self.l].to_string();
+        let mut minimizer_rc = revcomp(&minimizer);
+        if verbose 
+        {
+            if self.mm.is_some()  || minimizer == minimizer_rc { // in the double minimizer case, or if minimizer is its own rc, try to minimize mpos
+                if self.mm.is_some() {
+                     println!("{}: {}, minimizer {} dq {:?} buffer {:?}",
+                                          "multiple minimizers in kmer".red(),
+                                          sequence,minimizer,self.dq,self.buffer.clone().into_iter()
+                                          .map(|c| if c<usize::max_value() { c } else { 0 } ).collect::<Vec<usize>>());
                 }
-            }
-            for i in 0..mpos {
-                // if multiple minimizers, normalize mpos
-                let found_forward = sequence[i..i+self.l] == minimizer  || sequence[i..i+self.l]  == minimizer_rc;
-                let found_rc      = sequence_rc[i..i+self.l] == minimizer  || sequence_rc[i..i+self.l]  == minimizer_rc;
-                if found_forward || found_rc {
-                    if found_forward && found_rc { } // do we do anything in this case?
-                    #[allow(unused_assignments)]
-                    if found_rc {
-                        (sequence, sequence_rc) = (sequence_rc, sequence);
-                    }
-                    mpos = i;
-                    break;
+                else {
+                     println!("{}: {}, minimizer {} minimizer_rc {}",
+                                          "minimizer is its own rc".red(),sequence,minimizer,minimizer_rc);
                 }
             }
         }
+        (sequence, sequence_rc, minimizer, minimizer_rc, mpos) = 
+            normalize_mpos(sequence, sequence_rc, minimizer, minimizer_rc, mpos, self.l, self.mm.is_some());
+        if verbose { println!("mpos {} sequence {} minimizer {} mm {}",mpos,sequence,minimizer, self.mm.is_some()); }
         self.mm = next_mm;
-        let minimizer =  sequence[mpos..mpos+self.l].to_string();
-        let minimizer_rc = revcomp(&minimizer);
-        let rc = minimizer_rc < minimizer;
-        sequence = if rc { revcomp(&sequence) } else { sequence };
-        let mpos = if rc { sequence.len()-(mpos+self.l) } else { mpos };
-        let minimizer = if rc { minimizer_rc } else { minimizer };
-        if verbose { println!("rc {} mpos {} sequence {} minimizer {}",rc, mpos,sequence,minimizer); }
 
         let debug = false;
         if debug 
