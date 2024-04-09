@@ -14,7 +14,7 @@ fn superkmers_bench(c: &mut Criterion) {
     let m = 12;
     let range = Uniform::from(0..4);
     let mut rng = rand::thread_rng();
-    let seq_len = 100000;
+    let seq_len = 150;
     let seq = (0..seq_len)
         .map(|_| match range.sample(&mut rng) {
             0 => 'A',

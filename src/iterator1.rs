@@ -1,5 +1,5 @@
 use nthash::NtHashIterator;
-use crate::utils::{revcomp, normalize_mpos};
+use crate::utils::revcomp;
 use std::collections::VecDeque;
 use colored::Colorize;
 use crate::Superkmer; 
@@ -136,12 +136,16 @@ impl<'a> Iterator for SuperkmersIterator<'a> {
         self.start = self.end - self.k;
         return Some(superkmer);*/
 
-        let mut sequence = std::str::from_utf8(&self.read[self.start..self.end-1]).unwrap().to_string();
-        let mut sequence_rc = revcomp(&sequence);
-        let mut minimizer =  sequence[mpos..mpos+self.l].to_string();
-        let mut minimizer_rc = revcomp(&minimizer);
-        if verbose 
+        let rc :bool;
+        (mpos, rc) = 
+          normalize_mpos(self.read, self.start, self.end-1, mpos, self.l, mm);
+
+        if verbose
         {
+            let sequence = std::str::from_utf8(&self.read[self.start..self.end-1]).unwrap().to_string();
+            let sequence_rc = revcomp(&sequence);
+            let minimizer =  sequence[mpos..mpos+self.l].to_string();
+            let minimizer_rc = revcomp(&minimizer);
             if mm {
                  println!("{}: {}, minimizer {} dq {:?} buffer {:?}",
                                       "multiple minimizers in kmer".red(),
@@ -152,12 +156,6 @@ impl<'a> Iterator for SuperkmersIterator<'a> {
                  println!("{}: {}, minimizer {} minimizer_rc {}",
                                       "minimizer is its own rc".red(),sequence,minimizer,minimizer_rc);
             }
-        }
-        (sequence, sequence_rc, minimizer, minimizer_rc, mpos) = 
-            normalize_mpos(sequence, sequence_rc, minimizer, minimizer_rc, mpos, self.l, mm);
-
-        if verbose
-        {
             println!("new superkmer: {} len {} minimizer {} pos {} mm {}",
                      sequence, 
                      sequence.len(),
@@ -173,9 +171,10 @@ impl<'a> Iterator for SuperkmersIterator<'a> {
         }
 
         let superkmer = Superkmer {
-            sequence: sequence,
-            minimizer,
-            mpos,
+            start: self.start,
+            size: (self.end-1-self.start).try_into().unwrap(),
+            mpos: mpos.try_into().unwrap(),
+            rc
         };
         
         self.start = self.end - self.k;
@@ -183,3 +182,50 @@ impl<'a> Iterator for SuperkmersIterator<'a> {
     }
 }
 
+
+fn normalize_mpos(read: &[u8], start: usize, end: usize, mpos: usize, l: usize, mm: bool)
+    -> (usize, bool)
+{
+    let mut mpos = mpos;
+    let mut rc = false;
+    let len = end-start;
+    // if multiple minimizers, explore whole seq until mpos, otherwise just normalize by looking at revcomp
+    if ! mm {
+        if len-(mpos+l) < mpos {
+            mpos = len-(mpos+l);
+            rc = true;
+        }
+        if len-(mpos+l) == mpos {
+            let sequence = std::str::from_utf8(&read[start..end]).unwrap().to_string();
+            let sequence_rc = revcomp(&sequence);
+            if sequence_rc < sequence {
+                rc = true;
+            }
+        }
+    }
+    else
+    {
+        let sequence = std::str::from_utf8(&read[start..end]).unwrap().to_string();
+        let sequence_rc = revcomp(&sequence);
+        let minimizer =  sequence[mpos..mpos+l].to_string();
+        let minimizer_rc = revcomp(&minimizer);
+        for i in 0..mpos {
+            let found_forward = sequence[i..i+l] == *minimizer  || sequence[i..i+l]  == *minimizer_rc;
+            let found_rc      = sequence_rc[i..i+l] == *minimizer  || sequence_rc[i..i+l]  == *minimizer_rc;
+            if found_forward || found_rc {
+                if found_forward && found_rc { 
+                    if sequence_rc < sequence { 
+                        rc = true;
+                    }
+                } 
+                #[allow(unused_assignments)]
+                if found_rc {
+                    rc = true;
+                }
+                mpos = i;
+                break;
+            }
+        }
+    }
+    (mpos, rc)
+}

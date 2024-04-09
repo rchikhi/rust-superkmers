@@ -1,13 +1,22 @@
-mod utils;
+pub mod utils;
 pub mod naive;
 pub mod iterator1;
 
 #[derive(PartialEq, Eq, Hash, Debug)]
 pub struct Superkmer {
+    pub start: usize,
+    pub size: u8,
+    pub mpos: u8,
+    pub rc: bool
+}
+
+#[derive(PartialEq, Eq, Hash, Debug)]
+pub struct SuperkmerVerbose {
     pub sequence: String,
     pub minimizer: String,
     pub mpos: usize,
 }
+
 
 
 // An iterator for getting superkmers out of a DNA sequence
