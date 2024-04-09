@@ -40,7 +40,7 @@ fn superkmers_bench(c: &mut Criterion) {
     group.bench_with_input(BenchmarkId::new("superkmers_naive", seq_len), &seq,
     |b: &mut Bencher, i: &String| {
         b.iter(|| {
-            let iter = rust_superkmers::naive::extract_superkmers(i.as_bytes(), k, m);
+            let (iter, iter_verbose) = rust_superkmers::naive::extract_superkmers(i.as_bytes(), k, m);
             let _res = iter.into_iter().collect::<Vec<rust_superkmers::Superkmer>>();
             black_box(_res);
     })});
