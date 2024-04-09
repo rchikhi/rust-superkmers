@@ -5,9 +5,9 @@ use std::collections::HashSet;
 #[test]
 fn main() {
 
-    let genome_file = "tests/ecoli.genome.100k.fa";
+    //let genome_file = "tests/ecoli.genome.100k.fa";
     //let genome_file = "tests/ecoli.genome.76.fa";
-    //let genome_file = "tests/ecoli.genome.220.fa";
+    let genome_file = "tests/ecoli.genome.220.fa";
     let contents = fs::read_to_string(genome_file).expect("Failed to read test genome file").split("\n").collect::<Vec<&str>>()[1].to_string();
 
     // a stresstest over some parameters

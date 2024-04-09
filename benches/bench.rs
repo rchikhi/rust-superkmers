@@ -9,7 +9,11 @@ use rand::distributions::{Distribution, Uniform};
 use nthash::{nthash, NtHashIterator};
 use rust_seq2kminmers::{NtHashHPCIterator, NtHashSIMDIterator, HashMode};
 
-use cocktail::tokenizer::TokenizerMini;
+//use cocktail::tokenizer::TokenizerMini;
+use debruijn::dna_string::DnaString;
+use debruijn::kmer::{Kmer8};
+use debruijn::Kmer;
+use debruijn::msp::Scanner;
 
 fn superkmers_bench(c: &mut Criterion) {
     let k = 31;
@@ -26,9 +30,19 @@ fn superkmers_bench(c: &mut Criterion) {
             _ => 'N',
         })
         .collect::<String>();
+    let dnastring = DnaString::from_dna_string(&seq);
 
     let mut group = c.benchmark_group("BenchmarkGroup");
     group.throughput(Throughput::Bytes(seq.len() as u64));
+
+    group.bench_with_input(BenchmarkId::new("rust_debruijn_msp", seq_len), &seq,
+	|b: &mut Bencher, i: &String| {
+		b.iter(|| {
+            let score = |p: &Kmer8| p.to_u64() as usize;
+            let scanner = Scanner::new(&dnastring, score, k);
+            let _res = scanner.scan();
+			black_box(_res);
+		})});
 
 
     group.bench_with_input(BenchmarkId::new("superkmers_iterator1", seq_len), &seq,
@@ -39,6 +53,9 @@ fn superkmers_bench(c: &mut Criterion) {
             black_box(_res);
     })});
 
+    /*
+     // it was about 68 MB/s for 150bp sequences, k=32, l=8
+     // to enable: uncomment cocktail in Cargo.toml
 	group.bench_with_input(BenchmarkId::new("cocktail_tokenizermini", seq_len), &seq,
 	|b: &mut Bencher, i: &String| {
 		b.iter(|| {
@@ -46,7 +63,7 @@ fn superkmers_bench(c: &mut Criterion) {
 			let _res = tokenizer.into_iter().collect::<Vec<(u64,u64)>>(); 
 			black_box(_res);
 		})});
-
+    */
 
     group.bench_with_input(BenchmarkId::new("superkmers_naive", seq_len), &seq,
     |b: &mut Bencher, i: &String| {

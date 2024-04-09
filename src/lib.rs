@@ -1,6 +1,7 @@
 pub mod utils;
 pub mod naive;
 pub mod iterator1;
+pub mod iteratormsp;
 
 #[derive(PartialEq, Eq, Hash, Debug)]
 pub struct Superkmer {
@@ -31,11 +32,17 @@ pub struct SuperkmerVerbose {
 /// ```
 ///     fn main() {
 ///        let seq = b"AACTGCACTGCACTGCACTGCACACTGCACTGCACTGCACTGCACACTGCACTGCACTGACTGCACTGCACTGCACTGCACTGCCTGC";
-///        let iter = rust_superkmers::iterator1::SuperkmersIterator::new(seq, 10, 5, );
+///        let iter = rust_superkmers::iterator1::SuperkmersIterator::new(seq, 10, 5);
 ///        for superkmer in iter
 ///        {
 ///            println!("superkmer: {:?}",superkmer);
 ///        }
+///        let iter = rust_superkmers::iteratormsp::SuperkmersIterator::new(seq, 21, 8);
+///        for superkmer in iter
+///        {
+///            println!("superkmer: {:?}",superkmer);
+///        }
+
 ///     }
 /// ```
 fn test() { }

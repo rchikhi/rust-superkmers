@@ -15,7 +15,8 @@ rust-seq2kminmers = { git = "https://github.com/rchikhi/rust-seq2kminmers" }
 rand = "^0.5"
 colored = "2.0.0"
 bio = "*" # for revcomp
-cocktail = { git="https://github.com/natir/cocktail.git" }
+#cocktail = { git="https://github.com/natir/cocktail.git" }
+debruijn = "*"
 
 [dev-dependencies]
 criterion = "0.4.0"
@@ -27,5 +28,6 @@ harness = false
 #[profile.release]
 #debug = true # for callgrind
 
-#[profile.bench]
-#debug = true
+[profile.bench]
+lto = true
+
