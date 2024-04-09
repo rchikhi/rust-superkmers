@@ -33,12 +33,10 @@ pub fn normalize_mpos(sequence: String, sequence_rc: String, minimizer: String, 
     if ! mm {
         if sequence.len()-(mpos+l) < mpos {
             (sequence, sequence_rc) = (sequence_rc, sequence);
-            (minimizer, minimizer_rc) = (minimizer_rc, minimizer);
             mpos = sequence.len()-(mpos+l);
         }
-        if sequence.len()-(mpos+l) == mpos && minimizer_rc < minimizer {
+        if sequence.len()-(mpos+l) == mpos && sequence_rc < sequence {
             (sequence, sequence_rc) = (sequence_rc, sequence);
-            (minimizer, minimizer_rc) = (minimizer_rc, minimizer);
         }
     }
     else
@@ -50,18 +48,18 @@ pub fn normalize_mpos(sequence: String, sequence_rc: String, minimizer: String, 
                 if found_forward && found_rc { 
                     if sequence_rc < sequence { 
                         (sequence, sequence_rc) = (sequence_rc, sequence);
-                        (minimizer, minimizer_rc) = (minimizer_rc, minimizer);
                     }
                 } 
                 #[allow(unused_assignments)]
                 if found_rc {
                     (sequence, sequence_rc) = (sequence_rc, sequence);
-                    (minimizer, minimizer_rc) = (minimizer_rc, minimizer);
                 }
                 mpos = i;
                 break;
             }
         }
     }
+    minimizer =  sequence[mpos..mpos+l].to_string();
+    minimizer_rc = revcomp(&minimizer);
     (sequence, sequence_rc, minimizer, minimizer_rc, mpos)
 }

@@ -15,7 +15,6 @@ pub struct SuperkmersIterator<'a> {
     dq: VecDeque<usize>,
     buffer: Vec<usize>,
     done: bool,
-    mm: Option<usize>, // whether the previous k-mer had multiple occurrences of the minimizer
 }
 /* convention for k-mers having multiple minimizers, possibly in fw or rc orientation:
  * they're currently in their own superkmer, quarantined!
@@ -30,15 +29,13 @@ impl<'a> SuperkmersIterator<'a> {
         let mut nthash_iterator = NtHashIterator::new(read, l).unwrap();
         let mut dq: VecDeque<usize> = VecDeque::new(); // holds position of the smallest hash in front
         let mut buffer = vec![usize::max_value(); k];
-		let mut mm = None;
-        let mut minim = usize::max_value();
 
         for j in 0..k-l+1 {
             let hash = nthash_iterator.next().unwrap() as usize;
 			//println!("prelim dq {:?} buffer {:?} hash {:?}",dq,
             //buffer.clone().into_iter().map(|c| if c<usize::max_value() { c } else { 0 } ).collect::<Vec<usize>>(),hash);
             // Remove elements from the back of the deque that are greater than the current element
-            while !dq.is_empty() && buffer[dq[dq.len() - 1] % k] >= hash {
+            while !dq.is_empty() && buffer[dq[dq.len() - 1] % k] > hash {
                 dq.pop_back();
             }
 
@@ -47,15 +44,6 @@ impl<'a> SuperkmersIterator<'a> {
 
             // Update the buffer with the current element
             buffer[j] = hash;
-
-            // update the multiple minimizer signal
-            if hash == minim {
-                mm = Some(hash);
-            }
-            if hash < minim { 
-                minim = hash;
-                mm = None;
-            }
        }
  
         SuperkmersIterator {
@@ -69,7 +57,6 @@ impl<'a> SuperkmersIterator<'a> {
             dq,
             buffer,
             done: false,
-            mm,
         }
     }
 }
@@ -89,9 +76,14 @@ impl<'a> Iterator for SuperkmersIterator<'a> {
         // I think it can be fixed in post, when doing queries, check for both the forward and the
         // reverse. All it does is add redundancy to the structure
         if self.done { return None; }
-		let mut mpos = self.dq[0]-self.start;
+
+        let mut mpos = self.dq[0]-self.start;
 		assert!(mpos <= self.k-self.l);
-        let mut next_mm = self.mm;
+        let mm = self.dq.len() > 1 && self.buffer[self.dq[0] % self.k ] == self.buffer[self.dq[1] % self.k];
+
+        // given a starting k-mer, a minimizer pos mpos, and the fact that minimizer is maybe seen
+        // twice in starting kmer (but if seen again later, it will start another superkmer),
+        // extend superkmer as far as possible
         loop {
             // get the rightmost l-mer of the current k-mer (position self.i)
             let hash = self.nthash_iterator.next();
@@ -115,9 +107,15 @@ impl<'a> Iterator for SuperkmersIterator<'a> {
             if minimizer_out_of_scope {
                 self.dq.pop_front();
             }
-            println!("new hash {}",hash);
-                println!("old dq {:?}",self.dq);
 
+            if verbose
+            {
+                println!("new hash {} mmer {}",hash/10000000000000000, 
+                         std::str::from_utf8(&self.read[self.i..self.i+self.l]).unwrap().to_string());
+            }
+ 
+            println!("old dq {:?}",self.dq);
+            
             // Remove elements from the back of the deque that are greater than the current element
             while !self.dq.is_empty() && self.buffer[self.dq[self.dq.len() - 1] % self.k] > hash {
                 println!("popping back");
@@ -126,22 +124,10 @@ impl<'a> Iterator for SuperkmersIterator<'a> {
             }
                 println!("new dq {:?}",self.dq);
 
-            // Testing if multiple minimizers are present
-            if self.dq.len() > 0 && self.buffer[self.dq[0] % self.k] == hash {
-                next_mm = Some(hash);
-                if verbose { println!("{}: {}",
-                                  "multiple minimizers detected".red(),std::str::from_utf8(&self.read[self.end-self.k..self.end]).unwrap()); } 
-            }
-        
             let new_minimizer = self.dq.len() == 0;
 
             // Add the current index to the back of the deque
             self.dq.push_back(self.i);
-
-            // Maybe reset multiple minimizers if new hash
-            if self.mm.is_some() && self.dq.len() > 0 && self.buffer[self.dq[0] % self.k] != self.mm.unwrap() {
-                next_mm = None;
-            }
 
             // Update the buffer with the current element
             self.buffer[self.i % self.k] = hash;
@@ -149,7 +135,9 @@ impl<'a> Iterator for SuperkmersIterator<'a> {
             self.end += 1;
             self.i += 1;
 
-            if minimizer_out_of_scope || new_minimizer || self.mm.is_some() || next_mm.is_some() {break;}
+            let seen_minimizer_again = hash == self.buffer[self.dq[0] % self.k];
+        
+            if minimizer_out_of_scope || new_minimizer || mm || seen_minimizer_again {break;}
         }
         
         /*let superkmer = Superkmer {
@@ -166,35 +154,30 @@ impl<'a> Iterator for SuperkmersIterator<'a> {
         let mut minimizer_rc = revcomp(&minimizer);
         if verbose 
         {
-            if self.mm.is_some()  || minimizer == minimizer_rc { // in the double minimizer case, or if minimizer is its own rc, try to minimize mpos
-                if self.mm.is_some() {
-                     println!("{}: {}, minimizer {} dq {:?} buffer {:?}",
-                                          "multiple minimizers in kmer".red(),
-                                          sequence,minimizer,self.dq,self.buffer.clone().into_iter()
-                                          .map(|c| if c<usize::max_value() { c } else { 0 } ).collect::<Vec<usize>>());
-                }
-                else {
-                     println!("{}: {}, minimizer {} minimizer_rc {}",
-                                          "minimizer is its own rc".red(),sequence,minimizer,minimizer_rc);
-                }
+            if mm {
+                 println!("{}: {}, minimizer {} dq {:?} buffer {:?}",
+                                      "multiple minimizers in kmer".red(),
+                                      sequence,minimizer,self.dq,self.buffer.clone().into_iter()
+                                      .map(|c| if c<usize::max_value() { c } else { 0 } ).collect::<Vec<usize>>());
+            }
+            if minimizer == minimizer_rc {
+                 println!("{}: {}, minimizer {} minimizer_rc {}",
+                                      "minimizer is its own rc".red(),sequence,minimizer,minimizer_rc);
             }
         }
         (sequence, sequence_rc, minimizer, minimizer_rc, mpos) = 
-            normalize_mpos(sequence, sequence_rc, minimizer, minimizer_rc, mpos, self.l, self.mm.is_some());
-        if verbose { println!("mpos {} sequence {} minimizer {} mm {}",mpos,sequence,minimizer, self.mm.is_some()); }
-        self.mm = next_mm;
+            normalize_mpos(sequence, sequence_rc, minimizer, minimizer_rc, mpos, self.l, mm);
 
-        let debug = false;
-        if debug 
+        if verbose
         {
-            println!("new superkmer: {} len {} minimizer {} pos {}",
+            println!("new superkmer: {} len {} minimizer {} pos {} mm {}",
                      sequence, 
                      sequence.len(),
                      minimizer,
-                     mpos);
+                     mpos,
+                     mm
+                     );
         
-            let sequence_rc = revcomp(&sequence);
-            let minimizer_rc = revcomp(&minimizer);
             if ! (sequence.contains(&minimizer) || sequence_rc.contains(&minimizer) || 
                   sequence.contains(&minimizer_rc) || sequence_rc.contains(&minimizer_rc)) {
                println!("huh?! neither kmer and revcomp contain minimizer {}: {} - {}, mpos {}", minimizer, sequence, sequence_rc, mpos) 
@@ -206,6 +189,7 @@ impl<'a> Iterator for SuperkmersIterator<'a> {
             minimizer,
             mpos,
         };
+        
         self.start = self.end - self.k;
         Some(superkmer)
     }
