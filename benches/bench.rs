@@ -9,6 +9,8 @@ use rand::distributions::{Distribution, Uniform};
 use nthash::{nthash, NtHashIterator};
 use rust_seq2kminmers::{NtHashHPCIterator, NtHashSIMDIterator, HashMode};
 
+use cocktail::tokenizer::TokenizerMini;
+
 fn superkmers_bench(c: &mut Criterion) {
     let k = 31;
     let m = 8;
@@ -36,6 +38,15 @@ fn superkmers_bench(c: &mut Criterion) {
             let _res = iter.into_iter().collect::<Vec<rust_superkmers::Superkmer>>(); 
             black_box(_res);
     })});
+
+	group.bench_with_input(BenchmarkId::new("cocktail_tokenizermini", seq_len), &seq,
+	|b: &mut Bencher, i: &String| {
+		b.iter(|| {
+			let tokenizer = TokenizerMini::new(i.as_bytes(), k as u8, m as u8);
+			let _res = tokenizer.into_iter().collect::<Vec<(u64,u64)>>(); 
+			black_box(_res);
+		})});
+
 
     group.bench_with_input(BenchmarkId::new("superkmers_naive", seq_len), &seq,
     |b: &mut Bencher, i: &String| {

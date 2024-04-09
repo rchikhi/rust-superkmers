@@ -27,7 +27,7 @@ impl<'a> SuperkmersIterator<'a> {
     pub fn new(read: &'a [u8], k: usize, l: usize) -> SuperkmersIterator<'a> {
         //println!("getting superkmers for read {}",std::str::from_utf8(read).unwrap());
         let mut nthash_iterator = NtHashIterator::new(read, l).unwrap();
-        let mut dq: VecDeque<usize> = VecDeque::new(); // holds position of the smallest hash in front
+        let mut dq: VecDeque<usize> = VecDeque::with_capacity(k); // holds position of the smallest hash in front
         let mut buffer = vec![usize::max_value(); k];
 
         for j in 0..k-l+1 {
@@ -35,7 +35,7 @@ impl<'a> SuperkmersIterator<'a> {
 			//println!("prelim dq {:?} buffer {:?} hash {:?}",dq,
             //buffer.clone().into_iter().map(|c| if c<usize::max_value() { c } else { 0 } ).collect::<Vec<usize>>(),hash);
             // Remove elements from the back of the deque that are greater than the current element
-            while !dq.is_empty() && buffer[dq[dq.len() - 1] % k] > hash {
+            while !dq.is_empty() && buffer[dq.back().unwrap() % k] > hash {
                 dq.pop_back();
             }
 
@@ -108,7 +108,7 @@ impl<'a> Iterator for SuperkmersIterator<'a> {
             }
  
             // Remove elements from the back of the deque that are greater than the current element
-            while !self.dq.is_empty() && self.buffer[self.dq[self.dq.len() - 1] % self.k] > hash {
+            while !self.dq.is_empty() && self.buffer[self.dq.back().unwrap() % self.k] > hash {
                 self.dq.pop_back();
             }
 
@@ -127,14 +127,17 @@ impl<'a> Iterator for SuperkmersIterator<'a> {
         
             if minimizer_out_of_scope || new_minimizer || mm || seen_minimizer_again {break;}
         }
-        
-        /*let superkmer = Superkmer {
-            sequence: String::new(),
-            minimizer: String::new(),
+       
+        /*
+        let superkmer = Superkmer {
+            start: 0,
+            size: 0,
             mpos: 0,
+            rc: false
         };
         self.start = self.end - self.k;
-        return Some(superkmer);*/
+        return Some(superkmer);
+        */ 
 
         let rc :bool;
         (mpos, rc) = 
@@ -196,9 +199,9 @@ fn normalize_mpos(read: &[u8], start: usize, end: usize, mpos: usize, l: usize, 
             rc = true;
         }
         if len-(mpos+l) == mpos {
-            let sequence = std::str::from_utf8(&read[start..end]).unwrap().to_string();
+            let sequence = std::str::from_utf8(&read[start..end]).unwrap();
             let sequence_rc = revcomp(&sequence);
-            if sequence_rc < sequence {
+            if sequence_rc.as_str() < sequence {
                 rc = true;
             }
         }
