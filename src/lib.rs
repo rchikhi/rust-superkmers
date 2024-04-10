@@ -30,6 +30,7 @@ pub struct SuperkmerVerbose {
 ///
 /// Example usage:
 /// ```
+///     use debruijn::dna_string::DnaString; 
 ///     fn main() {
 ///        let seq = b"AACTGCACTGCACTGCACTGCACACTGCACTGCACTGCACTGCACACTGCACTGCACTGACTGCACTGCACTGCACTGCACTGCCTGC";
 ///        let iter = rust_superkmers::iterator1::SuperkmersIterator::new(seq, 10, 5);
@@ -37,7 +38,8 @@ pub struct SuperkmerVerbose {
 ///        {
 ///            println!("superkmer: {:?}",superkmer);
 ///        }
-///        let iter = rust_superkmers::iteratormsp::SuperkmersIterator::new(seq, 21, 8);
+///        let dnastring = DnaString::from_acgt_bytes(seq);
+///        let iter = rust_superkmers::iteratormsp::SuperkmersIterator::new(&dnastring, 21, 8);
 ///        for superkmer in iter
 ///        {
 ///            println!("superkmer: {:?}",superkmer);

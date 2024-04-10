@@ -1,28 +1,23 @@
-use colored::Colorize;
 use crate::Superkmer; 
 use debruijn::dna_string::DnaString;
 use debruijn::kmer::{Kmer8};
 use debruijn::Kmer;
-use debruijn::msp::{Scanner, MspIntervalP};
+use debruijn::msp::{Scanner};
 
 pub struct SuperkmersIterator<'a> {
-    read: &'a [u8],
-    k: usize,
-    l: usize,
     iter: Box<dyn Iterator<Item = Superkmer> + 'a>,
 }
 
  /* wrapper around rust-debruijn msp funtions
   */
 impl<'a> SuperkmersIterator<'a> {
-    pub fn new(read: &'a [u8], k: usize, l: usize) -> Self {
+    pub fn new(dnastring: &'a DnaString, k: usize, l: usize) -> Self {
             if l != 8 {
                 panic!("unsupported l size for MSP iteration");
             }
 
-            let dnastring = DnaString::from_acgt_bytes(read);
             let score = |p: &Kmer8| p.to_u64() as usize;
-            let scanner = Scanner::new(&dnastring, score, k);
+            let scanner = Scanner::new(dnastring, score, k);
 
             let superkmer_iter = scanner.scan().into_iter().map(|msp| Superkmer {
                 start: msp.start as usize,
@@ -32,9 +27,6 @@ impl<'a> SuperkmersIterator<'a> {
             });
 
             SuperkmersIterator {
-                read,
-                k,
-                l,
                 iter: Box::new(superkmer_iter),
             }
     }
