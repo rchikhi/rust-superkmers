@@ -8,6 +8,7 @@ pub struct Superkmer {
     pub start: usize,
     pub size: u8,
     pub mpos: u8,
+    pub mseq: String,
     pub rc: bool
 }
 

@@ -24,6 +24,7 @@ impl<'a> SuperkmersIterator<'a> {
                 size: msp.len as u8,
                 mpos: (msp.minimizer_pos - msp.start) as u8,
                 rc: false,
+                mseq: msp.minimizer.to_string(),
             });
 
             SuperkmersIterator {

@@ -177,6 +177,7 @@ impl<'a> Iterator for SuperkmersIterator<'a> {
             start: self.start,
             size: (self.end-1-self.start).try_into().unwrap(),
             mpos: mpos.try_into().unwrap(),
+            mseq: String::new(), // don't record the string here
             rc
         };
         
