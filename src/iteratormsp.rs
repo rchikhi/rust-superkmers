@@ -8,13 +8,26 @@ pub struct SuperkmersIterator<'a> {
     iter: Box<dyn Iterator<Item = Superkmer> + 'a>,
 }
 
+fn score8(p: &Kmer8) -> usize {
+    if p.to_u64() == 0 { std::usize::MAX } else { p.to_u64() as usize }
+}
+
+fn score10(p: &Kmer10) -> usize {
+    if p.to_u64() == 0 { std::usize::MAX } else { p.to_u64() as usize }
+}
+
+fn score12(p: &Kmer12) -> usize {
+    if p.to_u64() == 0 { std::usize::MAX } else { p.to_u64() as usize }
+}
+
+
+
  /* wrapper around rust-debruijn msp funtions
   */
 impl<'a> SuperkmersIterator<'a> {
     pub fn new(dnastring: &'a DnaString, k: usize, l: usize) -> Self {
         let superkmer_iter: Box<dyn Iterator<Item = Superkmer>> = match l {
             8 => {
-                let score8 = |p: &Kmer8| p.to_u64() as usize;
                 let scanner8 = Scanner::new(dnastring, score8, k);
                 Box::new(scanner8.scan().into_iter().map(|msp| Superkmer {
                     start: msp.start as usize,
@@ -25,7 +38,6 @@ impl<'a> SuperkmersIterator<'a> {
                 }))
             }
             10 => {
-                let score10 = |p: &Kmer10| p.to_u64() as usize;
                 let scanner10 = Scanner::new(dnastring, score10, k);
                 Box::new(scanner10.scan().into_iter().map(|msp| Superkmer {
                     start: msp.start as usize,
@@ -36,7 +48,6 @@ impl<'a> SuperkmersIterator<'a> {
                 }))
             }
             12 => {
-                let score12 = |p: &Kmer12| p.to_u64() as usize;
                 let scanner12 = Scanner::new(dnastring, score12, k);
                 Box::new(scanner12.scan().into_iter().map(|msp| Superkmer {
                     start: msp.start as usize,
