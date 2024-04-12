@@ -31,30 +31,30 @@ impl<'a> SuperkmersIterator<'a> {
                 let scanner8 = Scanner::new(dnastring, score8, k);
                 Box::new(scanner8.scan().into_iter().map(|msp| Superkmer {
                     start: msp.start as usize,
+                    mint: msp.minimizer.to_u64() as u32,
                     size: msp.len as u8,
                     mpos: (msp.minimizer_pos - msp.start) as u8,
                     rc: false,
-                    mseq: msp.minimizer.to_string(),
                 }))
             }
             10 => {
                 let scanner10 = Scanner::new(dnastring, score10, k);
                 Box::new(scanner10.scan().into_iter().map(|msp| Superkmer {
                     start: msp.start as usize,
+                    mint: msp.minimizer.to_u64() as u32,
                     size: msp.len as u8,
                     mpos: (msp.minimizer_pos - msp.start) as u8,
                     rc: false,
-                    mseq: msp.minimizer.to_string(),
                 }))
             }
             12 => {
                 let scanner12 = Scanner::new(dnastring, score12, k);
                 Box::new(scanner12.scan().into_iter().map(|msp| Superkmer {
                     start: msp.start as usize,
+                    mint: msp.minimizer.to_u64() as u32,
                     size: msp.len as u8,
                     mpos: (msp.minimizer_pos - msp.start) as u8,
                     rc: false,
-                    mseq: msp.minimizer.to_string(),
                 }))
             }
             _ => panic!("Unsupported l size for MSP iteration"),

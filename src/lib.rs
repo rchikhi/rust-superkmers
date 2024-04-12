@@ -6,9 +6,9 @@ pub mod iteratormsp;
 #[derive(PartialEq, Eq, Hash, Debug)]
 pub struct Superkmer {
     pub start: usize,
+    pub mint: u32,
     pub size: u8,
     pub mpos: u8,
-    pub mseq: String,
     pub rc: bool
 }
 

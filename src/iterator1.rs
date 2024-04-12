@@ -175,9 +175,9 @@ impl<'a> Iterator for SuperkmersIterator<'a> {
 
         let superkmer = Superkmer {
             start: self.start,
+            mint: 0, // don't record the minimizer here
             size: (self.end-1-self.start).try_into().unwrap(),
             mpos: mpos.try_into().unwrap(),
-            mseq: String::new(), // don't record the string here
             rc
         };
         
