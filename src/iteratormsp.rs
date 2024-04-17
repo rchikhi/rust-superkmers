@@ -25,7 +25,8 @@ fn score12(p: &Kmer12) -> usize {
  /* wrapper around rust-debruijn msp funtions
   */
 impl<'a> SuperkmersIterator<'a> {
-    pub fn new(dnastring: &'a DnaString, k: usize, l: usize) -> Self {
+    pub fn new(dnastring: &'a [u8], k: usize, l: usize) -> Self {
+        let dnastring = &DnaString::from_bytes(dnastring);
         let superkmer_iter: Box<dyn Iterator<Item = Superkmer>> = match l {
             8 => {
                 let scanner8 = Scanner::new(dnastring, score8, k);

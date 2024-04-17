@@ -48,6 +48,4 @@ pub struct SuperkmerVerbose {
 
 ///     }
 /// ```
-fn test() { }
-
-
+fn noop() {}

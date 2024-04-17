@@ -8,7 +8,7 @@ fn main() {
     let contents = fs::read_to_string(genome_file).expect("Failed to read test genome file").split("\n").collect::<Vec<&str>>()[1].to_string();
     let k = 31;
     let m = 8;
-    let dnastring = DnaString::from_dna_string(&contents);
+    let dnastring = DnaString::from_dna_string(&contents).to_bytes();
 
     let result = iteratormsp::SuperkmersIterator::new(&dnastring, k,m);
     println!("Iteratormsp:");
