@@ -16,9 +16,10 @@ const K12: usize = 12;
 
 lazy_static! {
     static ref SYNCMERS_8: [bool; 1 << (2 * K8)] = generate_syncmers::<K8>();
-    static ref SYNCMERS_10: [bool; 1 << (2 * K10)] = generate_syncmers::<K10>();
-    static ref SYNCMERS_12: [bool; 1 << (2 * K12)] = generate_syncmers::<K12>();
+    static ref SYNCMERS_10: Box<[bool; 1 << (2 * K10)]> = Box::new(generate_syncmers::<K10>());
+    static ref SYNCMERS_12: Box<[bool; 1 << (2 * K12)]> = Box::new(generate_syncmers::<K12>());
 }
+
 
 fn generate_syncmers<const K: usize>() -> [bool; 1 << (2 * K)] {
     let mut syncmers_arr = [false; 1 << (2 * K)];
