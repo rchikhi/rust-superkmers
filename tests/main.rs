@@ -1,6 +1,7 @@
 use std::fs;
 use rust_superkmers::{Superkmer, SuperkmerVerbose, naive, iterator1};
 use std::collections::HashSet;
+use debruijn::dna_string::DnaString;
 
 #[test]
 fn main() {
@@ -9,6 +10,12 @@ fn main() {
     //let genome_file = "tests/ecoli.genome.76.fa";
     let genome_file = "tests/ecoli.genome.220.fa";
     let contents = fs::read_to_string(genome_file).expect("Failed to read test genome file").split("\n").collect::<Vec<&str>>()[1].to_string();
+
+    // testing syncmers with l=10
+    let dnastring = DnaString::from_dna_string(&contents).to_bytes();
+    let iter = rust_superkmers::iteratorsyncmers::SuperkmersIterator::new(&dnastring, 31, 10);
+    iter.into_iter().collect::<Vec<Superkmer>>(); 
+
 
     // a stresstest over some parameters
     for m in vec![4,5,7,11,14] {
