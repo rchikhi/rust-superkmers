@@ -35,6 +35,25 @@ fn superkmers_bench(c: &mut Criterion) {
     let mut group = c.benchmark_group("BenchmarkGroup");
     group.throughput(Throughput::Bytes(seq.len() as u64));
 
+    group.bench_with_input(BenchmarkId::new("superkmers_iteratorsyncmers", seq_len), &seq,
+	|b: &mut Bencher, i: &String| {
+		b.iter(|| {
+            let binding = dnastring.to_bytes();
+            let iter = rust_superkmers::iteratorsyncmers::SuperkmersIterator::new(&binding, k, m);
+            let _res = iter.into_iter().collect::<Vec<rust_superkmers::Superkmer>>(); 
+			black_box(_res);
+		})});
+
+
+    group.bench_with_input(BenchmarkId::new("syncmers", seq_len), &seq,
+	|b: &mut Bencher, i: &String| {
+		b.iter(|| {
+            let syncmers = rust_superkmers::syncmers::find_syncmers(8, 2, &[0,6], None, &seq.as_bytes());
+			black_box(syncmers);
+		})});
+
+
+
     group.bench_with_input(BenchmarkId::new("rust_debruijn_msp", seq_len), &seq,
 	|b: &mut Bencher, i: &String| {
 		b.iter(|| {

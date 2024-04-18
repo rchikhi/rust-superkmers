@@ -2,6 +2,8 @@ pub mod utils;
 pub mod naive;
 pub mod iterator1;
 pub mod iteratormsp;
+pub mod syncmers;
+pub mod iteratorsyncmers;
 
 #[derive(PartialEq, Eq, Hash, Debug)]
 pub struct Superkmer {

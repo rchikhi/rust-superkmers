@@ -17,6 +17,8 @@ colored = "2.0.0"
 bio = "*" # for revcomp
 #cocktail = { git="https://github.com/natir/cocktail.git" }
 debruijn = "*"
+lazy_static = "*"
+twox-hash = "*"
 
 [dev-dependencies]
 criterion = "0.4.0"
