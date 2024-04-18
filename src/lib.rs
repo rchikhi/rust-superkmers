@@ -1,3 +1,4 @@
+#![feature(generic_const_exprs)]
 pub mod utils;
 pub mod naive;
 pub mod iterator1;

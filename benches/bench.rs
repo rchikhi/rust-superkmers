@@ -7,7 +7,6 @@ use criterion::{Bencher, Criterion, Throughput, BenchmarkId, black_box};
 use rand::distributions::{Distribution, Uniform};
 
 use nthash::{nthash, NtHashIterator};
-use rust_seq2kminmers::{NtHashHPCIterator, NtHashSIMDIterator, HashMode};
 
 //use cocktail::tokenizer::TokenizerMini;
 use debruijn::dna_string::DnaString;
