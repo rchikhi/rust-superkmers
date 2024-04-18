@@ -21,7 +21,6 @@ fn score12(p: &Kmer12) -> usize {
 }
 
 
-
  /* wrapper around rust-debruijn msp funtions
   */
 impl<'a> SuperkmersIterator<'a> {

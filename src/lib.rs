@@ -42,8 +42,8 @@ pub struct SuperkmerVerbose {
 ///        {
 ///            println!("superkmer: {:?}",superkmer);
 ///        }
-///        let dnastring = DnaString::from_acgt_bytes(seq);
-///        let iter = rust_superkmers::iteratormsp::SuperkmersIterator::new(&dnastring, 21, 8);
+///        let dnastring = DnaString::from_acgt_bytes(seq).to_bytes();
+///        let iter = rust_superkmers::iteratormsp::SuperkmersIterator::new(&dnastring,21, 8);
 ///        for superkmer in iter
 ///        {
 ///            println!("superkmer: {:?}",superkmer);

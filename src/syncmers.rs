@@ -75,7 +75,7 @@ pub fn is_revcomp_min(seq: &[u8]) -> bool {
 /// downsample fraction: None, or Some(float) between 0 and 1. If Some, only return some syncmers.
 ///
 /// ```rust
-/// # use syncmers::find_syncmers;
+/// # use rust_superkmers::syncmers::find_syncmers;
 /// let sequence = b"CCAGTGTTTACGG";
 /// let syncmers = find_syncmers(5, 2, &[2], None, sequence);
 /// assert!(syncmers == vec![b"CCAGT", b"TTACG"]);
@@ -168,93 +168,22 @@ pub fn find_syncmers_pos<const N: usize>(
         .collect::<Vec<_>>()
 }
 
-/// This is SIGNIFICANTLY slower than find_syncmers function. Prefer to use that instead.
-/// t is 0-based (unlike in the paper)
-/// NOTE: "By convention, ties are broken by choosing the leftmost position"
-/// NOTE: Sequence should be all upper case (or all lower case) BEFORE it gets to this point
-/// NOTE: Feed this the canonical strand
-/// ```
-/// # use syncmers::{revcomp, is_revcomp_min};
-/// # let seq = b"ACTGCTGATGCAGTCGCTATCGATCNATNCNGATCATGACTATCGACTACTGVA".to_vec();
-/// assert!(seq.iter().all(|x| x.is_ascii_uppercase()));
-/// let mut revcmp: Vec<u8>;
-/// let mut rev = false;
-/// // Get the canonical strand
-/// let seq = if is_revcomp_min(&seq) {
-///    revcmp = seq.to_vec();
-///    revcomp(&mut revcmp);
-///    &revcmp
-/// } else {
-///    &seq
-/// };
-/// ```
-pub struct Syncmers<'syncmer, const N: usize> {
-    pub k: usize,
-    pub s: usize,
-    pub t: &'syncmer [usize; N],
-    pub seq: &'syncmer [u8],
-    pos: usize,
-}
-
-impl<'syncmer, const N: usize> Syncmers<'syncmer, N> {
-    pub fn new(k: usize, s: usize, t: &'syncmer [usize; N], seq: &'syncmer [u8]) -> Self {
-        assert!(s < k);
-        assert!(t.iter().all(|&x| x <= (k - s)));
-        Syncmers {
-            k,
-            s,
-            t,
-            seq,
-            pos: 0,
-        }
-    }
-}
-
-#[allow(clippy::if_same_then_else)]
-impl<'syncmer, const N: usize> Iterator for Syncmers<'syncmer, N> {
-    type Item = &'syncmer [u8];
-
-    fn next(&mut self) -> Option<Self::Item> {
-        if self.seq.len() - self.pos < self.k {
-            return None;
-        }
-
-        let kmer = &self.seq[self.pos..self.pos + self.k];
-
-        let min_pos = kmer
-            .windows(self.s)
-            .enumerate()
-            .min_by(|(_, a), (_, b)| a.cmp(b));
-
-        self.pos += 1;
-        if N == 1 && self.t[0] == min_pos.unwrap().0 {
-            Some(kmer)
-        } else if N != 1 && self.t[0..N].contains(&min_pos.unwrap().0) {
-            Some(kmer)
-        } else {
-            self.next()
-        }
-    }
-}
-
 #[cfg(test)]
 mod test {
-    use super::*;
-
     #[test]
     pub fn test_syncmers_fig1b() {
         let sequence = b"CCAGTGTTTACGG";
-        let syncmer_positions = find_syncmers_pos(5, 2, &[2], sequence);
+        let syncmer_positions = crate::syncmers::find_syncmers_pos(5, 2, &[2], sequence);
         println!("{:?}", syncmer_positions);
         assert!(syncmer_positions == vec![0, 7]);
 
         let sequence = b"CCAGTGTTTACGG";
-        let syncmers = find_syncmers(5, 2, &[2], None, sequence);
+        let syncmers = crate::syncmers::find_syncmers(5, 2, &[2], None, sequence);
         assert!(syncmers == vec![b"CCAGT", b"TTACG"]);
         println!("{:?}", syncmers);
 
         let sequence = b"CCAGTGTTTACGG";
-        let syncmer_positions = find_syncmers_pos(5, 2, &[2, 3], sequence);
+        let syncmer_positions = crate::syncmers::find_syncmers_pos(5, 2, &[2, 3], sequence);
         println!("{:?}", syncmer_positions);
         assert!(syncmer_positions == vec![0, 6, 7]);
     }
