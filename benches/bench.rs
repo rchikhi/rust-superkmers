@@ -26,13 +26,23 @@ fn superkmers_bench(c: &mut Criterion) {
             1 => 'C',
             2 => 'G',
             3 => 'T',
-            _ => 'N',
+            //_ => 'N',
+            _ => 'A',
         })
         .collect::<String>();
     let dnastring = DnaString::from_dna_string(&seq);
 
     let mut group = c.benchmark_group("BenchmarkGroup");
     group.throughput(Throughput::Bytes(seq.len() as u64));
+
+    group.bench_with_input(BenchmarkId::new("superkmers_iteratorsyncmers2", seq_len), &seq,
+	|b: &mut Bencher, i: &String| {
+		b.iter(|| {
+            let iter = rust_superkmers::iteratorsyncmers2::SuperkmersIterator::new(i.as_bytes(), k, m);
+            let _res = iter.1.into_iter().collect::<Vec<rust_superkmers::Superkmer>>(); 
+			black_box(_res);
+		})});
+
 
     group.bench_with_input(BenchmarkId::new("superkmers_iteratorsyncmers", seq_len), &seq,
 	|b: &mut Bencher, i: &String| {

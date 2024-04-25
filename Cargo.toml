@@ -16,8 +16,9 @@ colored = "2.0.0"
 bio = "*" # for revcomp
 #cocktail = { git="https://github.com/natir/cocktail.git" }
 debruijn = "*"
-lazy_static = "*"
 twox-hash = "*"
+#static_init = "*" # crashes on my large static arrays with SIGSEGV
+lazy_static = "*"
 
 [dev-dependencies]
 criterion = "0.4.0"
@@ -30,5 +31,5 @@ harness = false
 #debug = true # for callgrind
 
 [profile.bench]
-lto = true
+#lto = true
 

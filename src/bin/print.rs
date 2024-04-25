@@ -1,5 +1,5 @@
 use std::fs;
-use rust_superkmers::{iterator1, iteratormsp};
+use rust_superkmers::{iterator1, iteratormsp, iteratorsyncmers2};
 use debruijn::dna_string::DnaString;
 
 fn main() {
@@ -21,5 +21,12 @@ fn main() {
     for superkmer in result {
         println!("{:?}",superkmer);
     }
+
+    let result = iteratorsyncmers2::SuperkmersIterator::new(contents.as_bytes(), k,m);
+    println!("Iteratorsyncmers2:");
+    for superkmer in result.1 {
+        println!("{:?}",superkmer);
+    }
+
 }
 

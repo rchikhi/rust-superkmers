@@ -1,10 +1,13 @@
 #![feature(generic_const_exprs)]
+#[allow(incomplete_features)]
 pub mod utils;
 pub mod naive;
 pub mod iterator1;
 pub mod iteratormsp;
 pub mod syncmers;
 pub mod iteratorsyncmers;
+pub mod iteratorsyncmers2;
+use std::cmp::Ordering;
 
 #[derive(PartialEq, Eq, Hash, Debug)]
 pub struct Superkmer {
@@ -15,12 +18,38 @@ pub struct Superkmer {
     pub rc: bool
 }
 
+
+impl PartialOrd for Superkmer {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for Superkmer {
+    fn cmp(&self, other: &Self) -> Ordering {
+        self.start.cmp(&other.start)
+    }
+}
+
 #[derive(PartialEq, Eq, Hash, Debug)]
 pub struct SuperkmerVerbose {
     pub sequence: String,
     pub minimizer: String,
     pub mpos: usize,
 }
+
+
+impl PartialOrd for SuperkmerVerbose {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+impl Ord for SuperkmerVerbose {
+    fn cmp(&self, other: &Self) -> Ordering {
+        self.mpos.cmp(&other.mpos)
+    }
+}
+
 
 
 
