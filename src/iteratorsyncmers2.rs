@@ -276,11 +276,11 @@ impl<'a> SuperkmersIterator {
         let mut min_positions = Vec::with_capacity(((1.3* (((m-k+1)*2)/(k-l+1)) as f32)) as usize); //expected closed syncmer density * 1.3
 
         let mut i = 0;
-        while i < m/2 as usize {
+        while i < m/2 as usize { // WHY /2?
             let window = get_storage_window(&storage, i*2);
             if SYNCMERS_8[window] {
                 min_positions.push((i, window as u16));
-                i += k-7;
+                i += k-7; // WHY?
             }
             i += 1
 		}
