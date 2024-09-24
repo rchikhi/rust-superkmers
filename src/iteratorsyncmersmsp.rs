@@ -9,7 +9,7 @@ pub struct SuperkmersIterator<'a> {
     iter: Box<dyn Iterator<Item = Superkmer> + 'a>,
 }
 
-
+const S: usize = 2;
 const K8: usize = 8;
 const K10: usize = 10;
 const K12: usize = 12;
@@ -37,7 +37,7 @@ fn generate_syncmers<const K: usize>() -> Box<[bool; 1 << (2 * K)]> {
             }
             bytes
         };
-        let syncmer = crate::syncmers::find_syncmers(K as usize, 2, &[0, K - 2], None, &kmer_bytes);
+        let syncmer = crate::syncmers::find_syncmers(K as usize, S, &[0, K - S], None, &kmer_bytes);
         syncmers_arr[kmer_int] = !syncmer.is_empty();
     }
     syncmers_arr
@@ -58,7 +58,15 @@ fn score12(p: &Kmer12) -> usize {
     !SYNCMERS_12[kmer] as usize
 }
 
- /* wrapper around rust-debruijn msp funtions
+ 
+/* // Unclear if I can do this: is there an arbitrary-k Kmer type in rust-debruijn?
+fn score(p: &Kmer) -> usize {
+    let kmer = p.to_u64() as usize;
+    let syncmer = crate::syncmers::find_syncmers(K as usize, S, &[0, K - S], None, &kmer);
+    !syncmer.is_empty()
+}*/
+
+/* wrapper around rust-debruijn msp funtions
   */
 impl<'a> SuperkmersIterator<'a> {
     pub fn new(dnastring: &'a [u8], k: usize, l: usize) -> Self {
@@ -95,6 +103,17 @@ impl<'a> SuperkmersIterator<'a> {
                 }))
             }
             _ => panic!("Unsupported l size for MSP iteration"),
+            /* // possible to do this? unclear due to Kmer type
+            _ => {
+                let scanner = Scanner::new(dnastring, score, k);
+                Box::new(scanner.scan().into_iter().map(|msp| Superkmer {
+                    start: msp.start as usize,
+                    mint: msp.minimizer.to_u64() as u32,
+                    size: msp.len as u8,
+                    mpos: (msp.minimizer_pos - msp.start) as u8,
+                    rc: false,
+                }))
+            }*/
         };
         SuperkmersIterator { iter: superkmer_iter }
     }

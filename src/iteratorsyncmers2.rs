@@ -4,6 +4,7 @@ use crate::Superkmer;
 use lazy_static::lazy_static;
 //use debruijn::dna_string::DnaString;
 
+const S: usize = 2; //syncmer's s parameter
 const K8: usize = 8;
 const K10: usize = 10;
 const K12: usize = 12;
@@ -33,7 +34,7 @@ fn generate_syncmers<const K: usize>() -> Box<[bool; 1 << (2 * K)]> {
             }
             bytes
         };
-        let syncmer = crate::syncmers::find_syncmers(K as usize, 2, &[0, K - 2], None, &kmer_bytes);
+        let syncmer = crate::syncmers::find_syncmers(K as usize, S, &[0, K - S], None, &kmer_bytes);
         syncmers_arr[kmer_int] = !syncmer.is_empty();
     }
     syncmers_arr
@@ -276,11 +277,12 @@ impl<'a> SuperkmersIterator {
         let mut min_positions = Vec::with_capacity(((1.3* (((m-k+1)*2)/(k-l+1)) as f32)) as usize); //expected closed syncmer density * 1.3
 
         let mut i = 0;
-        while i < m/2 as usize { // WHY /2?
+        while i < m/2 as usize {
             let window = get_storage_window(&storage, i*2);
             if SYNCMERS_8[window] {
                 min_positions.push((i, window as u16));
-                i += k-7; // WHY?
+                //i += k-7; // WHY?
+                i += 1; // WHY?
             }
             i += 1
 		}
@@ -320,7 +322,8 @@ impl<'a> Iterator for SuperkmersIterator {
                 //let mut end : usize= next_pos as usize + self.k - 1;
                 let mut end : usize = start_pos as usize + self.k as usize - self.l;
                 if end >= self.m { end = (self.m-1) as usize; }
-                let start = start_pos as usize - (self.k-self.l);
+                //println!("start_pos k l {} {} {}",start_pos,self.k,self.l);
+                let start = start_pos as usize; // probably not right
                 self.p += 1;
                 return Some(Superkmer {
                     start: start as usize,

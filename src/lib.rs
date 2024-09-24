@@ -5,8 +5,9 @@ pub mod naive;
 pub mod iterator1;
 pub mod iteratormsp;
 pub mod syncmers;
-pub mod iteratorsyncmers;
+pub mod iteratorsyncmersmsp;
 pub mod iteratorsyncmers2;
+pub mod naivesyncmers;
 use std::cmp::Ordering;
 
 #[derive(PartialEq, Eq, Hash, Debug)]
