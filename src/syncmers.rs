@@ -10,7 +10,7 @@
 use std::cmp::Ordering;
 
 //use pulp::Arch;
-use twox_hash::xxh3::Hash64;
+use twox_hash::XxHash64;
 use std::hash::Hasher;
 
 // TODO:Denote the reverse complement of x by Embedded Image. For a given order, the canonical form of a k-mer x, denoted by Canonical(x), is the smaller of x and Embedded Image. For example, under the lexicographic order, Canonical(CGGT) = ACCG.
@@ -115,7 +115,7 @@ pub fn find_syncmers<'a, const N: usize>(
             .iter()
             .map(|&pos| &seq[pos..pos + k])
             .filter(|&syncmer| {
-                let mut hash = Hash64::with_seed(42);
+                let mut hash = XxHash64::with_seed(42);
                 hash.write(syncmer);
                 let hash = hash.finish();
                 hash < downsample_threshold.unwrap()
