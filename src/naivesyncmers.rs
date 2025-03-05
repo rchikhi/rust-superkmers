@@ -5,14 +5,21 @@ use crate::{Superkmer,SuperkmerVerbose};
 // (problematic for long chromosomes)
 #[allow(dead_code)]
 pub fn extract_superkmers(read: &[u8], k: usize, l: usize) -> (Vec<Superkmer>, Vec<SuperkmerVerbose>) {
+    extract_superkmers_with_options(read, k, l, true) // Default to rightmost
+}
+
+// a naive O(nk) superkmer implementation that stores all superkmers of a sequence in a vector
+// with option to select leftmost or rightmost syncmer as minimizer
+#[allow(dead_code)]
+pub fn extract_superkmers_with_options(read: &[u8], k: usize, l: usize, use_rightmost: bool) -> (Vec<Superkmer>, Vec<SuperkmerVerbose>) {
     let read_len = read.len();
 
-    let S = 2;
+    let s = 2;
 
     let read_str = std::str::from_utf8(&read[..]).unwrap().to_string();
 
     // Compute the hash sequence for each l-mer in the read
-    let syncmers = crate::syncmers::find_syncmers(l, S, &[0, l-S], None, read);
+    let syncmers = crate::syncmers::find_syncmers(l, s, &[0, l-s], None, read);
 
     // Find the minimizer (syncmer) in each k-mer
     let mut kmer_minimizers_pos  = vec![usize::MAX; read_len - k + 1];
@@ -20,26 +27,39 @@ pub fn extract_superkmers(read: &[u8], k: usize, l: usize) -> (Vec<Superkmer>, V
     for i in 0..(read_len - k + 1) {
 		// compute minimizer of that "window" (=kmer), i.e get the syncmer(s) inside
 		let mut syncmer_count = 0;
-		let mut first_syncmer_pos = None;
+		let mut syncmer_pos = None;
 
-		for j in 0..(k - l + 1) {
+		// This is a reversed traversal if we want rightmost
+		let indices: Vec<usize> = if use_rightmost {
+			// For rightmost, check positions from right to left
+			(0..(k - l + 1)).rev().collect()
+		} else {
+			// For leftmost, check positions from left to right
+			(0..(k - l + 1)).collect()
+		};
+		
+		for j in indices {
 			let lmer = &read[i + j..i + j + l];
-			let lmer_str = &read_str[i + j..i + j + l];
+			let _lmer_str = &read_str[i + j..i + j + l];
 			if syncmers.contains(&lmer) { // do we want this?: //|| syncmers.contains(&revcomp(&lmer_str).as_bytes())  {
 				syncmer_count += 1;
-				if first_syncmer_pos.is_none() {
-					first_syncmer_pos = Some(i + j);
+				// Take first syncmer we find (which will be rightmost if we're traversing in reverse)
+				if syncmer_pos.is_none() {
+					syncmer_pos = Some(i + j);
+					// Break after finding the first one (rightmost if reversed, leftmost otherwise)
+					break;
 				}
 			}
 		}
 
 		has_two_minimizer_occ[i] = syncmer_count > 1;
-		if let Some(pos) = first_syncmer_pos {
+		if let Some(pos) = syncmer_pos {
 			kmer_minimizers_pos[i] = pos;
 		}
     }
-                println!("yncmers {:?}",syncmers);
-                println!("kmer minimizers pos {:?}",kmer_minimizers_pos);
+    // Debug output, uncomment if needed
+    // println!("syncmers {:?}",syncmers);
+    // println!("kmer minimizers pos {:?}",kmer_minimizers_pos);
 
     // Find super-kmers by scanning the read
     let mut super_kmers = vec![];
@@ -50,7 +70,7 @@ pub fn extract_superkmers(read: &[u8], k: usize, l: usize) -> (Vec<Superkmer>, V
     let debug = false;
     while end <= read_len {
         let kmer_minimizer_pos = kmer_minimizers_pos[end-k];
-        let next_mm = has_two_minimizer_occ[end-k];
+        let _next_mm = has_two_minimizer_occ[end-k];
         if kmer_minimizer_pos != last_minimizer_pos { //|| next_mm {
             let sequence = std::str::from_utf8(&read[start..end-1]).unwrap().to_string();
             let sequence_rc = revcomp(&sequence);
