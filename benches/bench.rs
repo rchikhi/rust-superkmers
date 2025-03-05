@@ -44,11 +44,11 @@ fn superkmers_bench(c: &mut Criterion) {
 		})});
 
 
-    group.bench_with_input(BenchmarkId::new("superkmers_iteratorsyncmers", seq_len), &seq,
+    group.bench_with_input(BenchmarkId::new("superkmers_iteratorsyncmersmsp", seq_len), &seq,
 	|b: &mut Bencher, i: &String| {
 		b.iter(|| {
             let binding = dnastring.to_bytes();
-            let iter = rust_superkmers::iteratorsyncmers::SuperkmersIterator::new(&binding, k, m);
+            let iter = rust_superkmers::iteratorsyncmersmsp::SuperkmersIterator::new(&binding, k, m);
             let _res = iter.into_iter().collect::<Vec<rust_superkmers::Superkmer>>(); 
 			black_box(_res);
 		})});

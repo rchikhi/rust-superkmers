@@ -286,7 +286,7 @@ impl<'a> SuperkmersIterator {
             }
             i += 1
 		}
-        println!("its2 minimizer pos {:?}",min_positions);
+        //println!("its2 minimizer pos {:?}",min_positions);
         (storage, SuperkmersIterator { 
 			min_positions,
 			p: 0,
