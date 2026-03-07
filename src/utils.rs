@@ -233,50 +233,58 @@ pub fn bitpack_fragment_rc_scalar(fragment: &[u8]) -> Vec<u64> {
     storage
 }
 
+/// Bit-pack an ASCII DNA fragment into a caller-provided buffer.
+/// Each u64 holds 32 bases in MSB-first 2-bit encoding (A=0, C=1, G=2, T=3).
+/// The last word is padded with A's if the fragment length is not a multiple of 32.
+/// Uses AVX2 when available, falls back to scalar otherwise.
+///
+/// `out` must have length >= `(fragment.len() + 31) / 32`.
+pub fn bitpack_fragment_into(fragment: &[u8], out: &mut [u64]) {
+    #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+    {
+        if is_x86_feature_detected!("avx2") {
+            let mut buffer = [b'A'; 32];
+            for (i, chunk) in fragment.chunks(32).enumerate() {
+                if chunk.len() < 32 {
+                    buffer[..chunk.len()].copy_from_slice(chunk);
+                    buffer[chunk.len()..].fill(b'A');
+                    let (conv_chunk, _) = unsafe { convert_bases(&buffer) };
+                    out[i] = unsafe { pack_32_bases(conv_chunk) };
+                } else {
+                    let (conv_chunk, _) = unsafe { convert_bases(chunk) };
+                    out[i] = unsafe { pack_32_bases(conv_chunk) };
+                }
+            }
+            return;
+        }
+    }
+
+    // Scalar fallback
+    for (i, chunk) in fragment.chunks(32).enumerate() {
+        out[i] = scalar_pack_chunk(chunk);
+    }
+}
+
 /// Bit-pack an ASCII DNA fragment into a Vec of u64 words.
 /// Each u64 holds 32 bases in MSB-first 2-bit encoding (A=0, C=1, G=2, T=3).
 /// The last word is padded with A's if the fragment length is not a multiple of 32.
 /// Uses AVX2 when available, falls back to scalar otherwise.
 pub fn bitpack_fragment(fragment: &[u8]) -> Vec<u64> {
     let num_words = (fragment.len() + 31) / 32;
-    let mut storage = Vec::with_capacity(num_words);
-
-    #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
-    {
-        if is_x86_feature_detected!("avx2") {
-            let mut buffer = [b'A'; 32];
-            for chunk in fragment.chunks(32) {
-                if chunk.len() < 32 {
-                    buffer[..chunk.len()].copy_from_slice(chunk);
-                    buffer[chunk.len()..].fill(b'A');
-                    let (conv_chunk, _) = unsafe { convert_bases(&buffer) };
-                    let packed = unsafe { pack_32_bases(conv_chunk) };
-                    storage.push(packed);
-                } else {
-                    let (conv_chunk, _) = unsafe { convert_bases(chunk) };
-                    let packed = unsafe { pack_32_bases(conv_chunk) };
-                    storage.push(packed);
-                }
-            }
-            return storage;
-        }
-    }
-
-    // Scalar fallback
-    for chunk in fragment.chunks(32) {
-        storage.push(scalar_pack_chunk(chunk));
-    }
+    let mut storage = vec![0u64; num_words];
+    bitpack_fragment_into(fragment, &mut storage);
     storage
 }
 
-/// Bit-pack the reverse complement of an ASCII DNA fragment into a Vec of u64 words.
-/// Equivalent to `bitpack_fragment(rc(fragment))` but without materializing the RC string.
+/// Bit-pack the reverse complement of an ASCII DNA fragment into a caller-provided buffer.
+/// Equivalent to `bitpack_fragment_into(rc(fragment), out)` but without materializing the RC string.
 /// Each u64 holds 32 bases in MSB-first 2-bit encoding (A=0, C=1, G=2, T=3).
 /// The last word is padded with A's if the fragment length is not a multiple of 32.
-pub fn bitpack_fragment_rc(fragment: &[u8]) -> Vec<u64> {
+///
+/// `out` must have length >= `(fragment.len() + 31) / 32`.
+pub fn bitpack_fragment_rc_into(fragment: &[u8], out: &mut [u64]) {
     let n = fragment.len();
     let num_words = (n + 31) / 32;
-    let mut storage = Vec::with_capacity(num_words);
 
     for w in 0..num_words {
         let rc_start = w * 32;
@@ -287,8 +295,18 @@ pub fn bitpack_fragment_rc(fragment: &[u8]) -> Vec<u64> {
         }
         // Pack reversed bases, then XOR to complement the 2-bit values.
         // In 2-bit encoding (A=0,C=1,G=2,T=3), XOR 3 gives A↔T, C↔G.
-        storage.push(pack_and_complement(&buffer, count));
+        out[w] = pack_and_complement(&buffer, count);
     }
+}
 
+/// Bit-pack the reverse complement of an ASCII DNA fragment into a Vec of u64 words.
+/// Equivalent to `bitpack_fragment(rc(fragment))` but without materializing the RC string.
+/// Each u64 holds 32 bases in MSB-first 2-bit encoding (A=0, C=1, G=2, T=3).
+/// The last word is padded with A's if the fragment length is not a multiple of 32.
+pub fn bitpack_fragment_rc(fragment: &[u8]) -> Vec<u64> {
+    let n = fragment.len();
+    let num_words = (n + 31) / 32;
+    let mut storage = vec![0u64; num_words];
+    bitpack_fragment_rc_into(fragment, &mut storage);
     storage
 }
