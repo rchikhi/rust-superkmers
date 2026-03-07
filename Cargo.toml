@@ -11,8 +11,8 @@ license = "MIT/Apache-2.0"
 [dependencies]
 nthash = "0.5.1"
 nthash32 = { git = "https://github.com/rchikhi/rust-nthash32"  }
-rand = "^0.5"
-colored = "2.0.0"
+rand = "0.9"
+colored = "2"
 bio = "*" # for revcomp
 #cocktail = { git="https://github.com/natir/cocktail.git" }
 debruijn = "*"
@@ -21,7 +21,7 @@ twox-hash = "*"
 lazy_static = "*"
 
 [dev-dependencies]
-criterion = "0.4.0"
+criterion = "0.5"
 
 [[bench]]
 name = "bench"

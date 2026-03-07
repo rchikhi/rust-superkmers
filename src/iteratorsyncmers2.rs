@@ -1,22 +1,13 @@
 // much taken from rust-debruijn
 use crate::Superkmer;
-//use static_init::{dynamic};
 use lazy_static::lazy_static;
-//use debruijn::dna_string::DnaString;
 
 const S: usize = 2; //syncmer's s parameter
 const K8: usize = 8;
-const K10: usize = 10;
-const K12: usize = 12;
 
 lazy_static! {
 static ref SYNCMERS_8: Box<[bool; 1 << (2 * K8)]> = generate_syncmers::<K8>();
 }
-/*#[dynamic]
-static SYNCMERS_10: Box<[bool; 1 << (2 * K10)]> = generate_syncmers::<K10>();
-#[dynamic]
-static SYNCMERS_12: Box<[bool; 1 << (2 * K12)]> = generate_syncmers::<K12>();
-*/
 
 fn generate_syncmers<const K: usize>() -> Box<[bool; 1 << (2 * K)]> {
     let mut syncmers_arr = Box::new([false; 1 << (2 * K)]);
@@ -38,18 +29,6 @@ fn generate_syncmers<const K: usize>() -> Box<[bool; 1 << (2 * K)]> {
         syncmers_arr[kmer_int] = !syncmer.is_empty();
     }
     syncmers_arr
-}
-
-
-#[inline(always)]
-pub fn base_to_bits(c: u8) -> u8 {
-    match c {
-        b'A' | b'a' => 0u8,
-        b'C' | b'c' => 1u8,
-        b'G' | b'g' => 2u8,
-        b'T' | b't' => 3u8,
-        _ => 0u8,
-    }
 }
 
 // bitops_avx2
@@ -177,7 +156,6 @@ pub(crate) unsafe fn convert_bases(bytes: &[u8]) -> (__m256i, bool) {
         _mm256_setzero_si256(),
     );
     let valid = _mm256_testc_si256(_mm256_setzero_si256(), mask) != 0;
-    // TODO: this test doesn't work
 
     // step 4: use lookup table to convert nucleotides to their 2-bit representation,
     // while zeroing out invalid characters (shuffle returns a zero byte if MSB of a byte is 1)
@@ -187,163 +165,170 @@ pub(crate) unsafe fn convert_bases(bytes: &[u8]) -> (__m256i, bool) {
     (res, valid)
 }
 
+/// Extract an l-mer value from the packed storage, MSB-first encoding
+/// (matching debruijn's Kmer8::to_u64() convention).
+/// Each u64 in `data` holds 32 bases, with base 0 at bits 63-62 (MSB).
+fn get_kmer_value(data: &[u64], base_pos: usize, l: usize) -> usize {
+    let word = base_pos / 32;
+    let offset = base_pos % 32; // base offset within the word
+    let bit_len = l * 2;
+
+    if offset + l <= 32 {
+        // All bases fit in one word
+        let shift = 64 - (offset + l) * 2;
+        ((data[word] >> shift) & ((1u64 << bit_len) - 1)) as usize
+    } else {
+        // Spans two words
+        let bases_in_first = 32 - offset;
+        let bases_in_second = l - bases_in_first;
+
+        // High bits: last bases_in_first bases of the first word (lowest bits)
+        let first_bits = (data[word] & ((1u64 << (bases_in_first * 2)) - 1)) as usize;
+
+        // Low bits: first bases_in_second bases of the second word (highest bits)
+        let shift = 64 - bases_in_second * 2;
+        let second_bits = ((data[word + 1] >> shift) & ((1u64 << (bases_in_second * 2)) - 1)) as usize;
+
+        (first_bits << (bases_in_second * 2)) | second_bits
+    }
+}
+
+/// MinPos tracks the best minimizer position within a k-mer window.
+/// Ordering: lower val wins; on tie, higher pos (rightmost) wins.
+/// This matches debruijn's msp.rs MinPos exactly.
+#[derive(Clone, Copy, PartialEq, Eq)]
+struct MinPos {
+    val: usize,
+    pos: usize,
+    kmer: usize,
+}
+
+impl Ord for MinPos {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        let val_cmp = self.val.cmp(&other.val);
+        if val_cmp != std::cmp::Ordering::Equal {
+            return val_cmp;
+        }
+        // Reverse position: higher pos is "less" (preferred by min)
+        match self.pos.cmp(&other.pos) {
+            std::cmp::Ordering::Equal => std::cmp::Ordering::Equal,
+            std::cmp::Ordering::Less => std::cmp::Ordering::Greater,
+            std::cmp::Ordering::Greater => std::cmp::Ordering::Less,
+        }
+    }
+}
+
+impl PartialOrd for MinPos {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
 
 pub struct SuperkmersIterator {
-    min_positions : Vec<(usize, u16)>,
-	p : usize,
-    k :usize,
-    l :usize,
-    m :usize,
+    min_positions: Vec<(usize, usize, usize)>, // (kmer_start_i, minimizer_pos, minimizer_kmer_value)
+    p: usize,
+    k: usize,
+    m: usize,
 }
 
-fn get_storage_window(data: &[u64], pos: usize) -> usize {
-
-    let idx = pos / 64;
-    let offset = pos % 64;
-    let mut window: usize;
-
-    let window_size = 16;
-    if offset + window_size > 64 {
-        // Window spans across two u64 entries
-        let bits_in_first = 64 - offset;
-        let bits_in_second = window_size - bits_in_first;
-        // Extract bits from the first u64
-        window = ((data[idx] >> offset) & ((1 << bits_in_first) - 1)) as usize;
-        // Shift left and extract bits from the second u64
-        window |= ((data[idx + 1] & ((1 << bits_in_second) - 1)) as usize) << bits_in_first;
-    } else {
-        // All bits are within the current u64
-        window = ((data[idx] >> offset) & ((1 << window_size) - 1)) as usize;
-    }
-    window
-}
-
-
-impl<'a> SuperkmersIterator {
+impl SuperkmersIterator {
     pub fn new(seq_str: &[u8], k: usize, l: usize) -> (Vec<u64>, Self) {
         let m = seq_str.len();
-		let mut storage: Vec<u64> = Vec::new();
-		let mut len = 0;
-        let mut _has_N = false;
+        let mut storage: Vec<u64> = Vec::new();
         let mut buffer = [b'A'; 32];
-		// Accelerated avx2 mode. Should run on most machines made since 2013.
+
+        // STEP 1: Bit-pack the sequence with AVX2
         #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
         {
             if is_x86_feature_detected!("avx2") {
-                /*let seq_str_transmuted = unsafe {
-                    // Cast raw pointer to a slice of size N+2
-                    std::slice::from_raw_parts(seq_str.as_ptr(), seq_str.len()+(32-seq_str.len()%32))
-                };*/
                 for chunk in seq_str.chunks(32) {
                     if chunk.len() < 32 {
-                        // If the chunk is less than 32, create a temporary vector and resize it
                         buffer[..chunk.len()].copy_from_slice(chunk);
-                        // Perform operations on the adjusted chunk
-                        let (conv_chunk, has_N_chunk) = unsafe { convert_bases(&buffer) };
-                        _has_N |= has_N_chunk;
+                        let (conv_chunk, _) = unsafe { convert_bases(&buffer) };
                         let packed = unsafe { pack_32_bases(conv_chunk) };
                         storage.push(packed);
                     } else {
-                        // Perform operations directly on the original chunk
-                        let (conv_chunk, has_N_chunk) = unsafe { convert_bases(chunk) };
-                        _has_N |= has_N_chunk;
-                        /*if has_N // TODO: fix the validity check in convert_bases, it's not right
-                        {println!("N's in chunk {}: {}", i, std::str::from_utf8(chunk).unwrap());
-                        }*/
+                        let (conv_chunk, _) = unsafe { convert_bases(chunk) };
                         let packed = unsafe { pack_32_bases(conv_chunk) };
                         storage.push(packed);
                     }
                 }
-                len = m;
             }
         }
-        /*
-		let mut Npos: Vec<usize> = Vec::new();
-        if has_N {
-            //println!("investigating N's in {}", std::str::from_utf8(seq_str).unwrap());
-            for i in 0..seq_str.len() {
-                if seq_str[i] == b'N' {
-                    Npos.push(len);
+
+        // STEP 2: MSP sliding window to find minimizer change points
+        let score = |kmer_val: usize| -> usize { !SYNCMERS_8[kmer_val] as usize };
+
+        let mp = |pos: usize| -> MinPos {
+            let kmer = get_kmer_value(&storage, pos, l);
+            let val = score(kmer);
+            MinPos { val, pos, kmer }
+        };
+
+        let find_min = |start: usize, stop: usize| -> MinPos {
+            let mut min_pos = mp(start);
+            for pos in (start + 1)..=stop {
+                let current = mp(pos);
+                min_pos = std::cmp::min(min_pos, current);
+            }
+            min_pos
+        };
+
+        let mut min_positions: Vec<(usize, usize, usize)> = Vec::with_capacity(16);
+
+        if m >= k {
+            let mut min_pos = find_min(0, k - l);
+            min_positions.push((0, min_pos.pos, min_pos.kmer));
+
+            for i in 1..(m - k + 1) {
+                let end_pos = mp(i + k - l);
+
+                if i > min_pos.pos {
+                    // Old minimum fell out of window, rescan
+                    min_pos = find_min(i, i + k - l);
+                    min_positions.push((i, min_pos.pos, min_pos.kmer));
+                } else if end_pos.val < min_pos.val {
+                    // New l-mer is strictly better
+                    min_pos = end_pos;
+                    min_positions.push((i, min_pos.pos, min_pos.kmer));
                 }
             }
-            // TODO do something with Npos
-            if Npos.len() > 0 {
-                println!("ignoring seq containing N's: {:?} len {}",seq_str, len);
-                //min_positions = Vec::new(); 
-            }
-        }*/
+        }
 
-        // populate min_positions
-        let mut min_positions = Vec::with_capacity(((1.3* (((m-k+1)*2)/(k-l+1)) as f32)) as usize); //expected closed syncmer density * 1.3
-
-        let mut i = 0;
-        while i < m/2 as usize {
-            let window = get_storage_window(&storage, i*2);
-            if SYNCMERS_8[window] {
-                min_positions.push((i, window as u16));
-                //i += k-7; // WHY?
-                i += 1; // WHY?
-            }
-            i += 1
-		}
-        //println!("its2 minimizer pos {:?}",min_positions);
-        (storage, SuperkmersIterator { 
-			min_positions,
-			p: 0,
+        (storage, SuperkmersIterator {
+            min_positions,
+            p: 0,
             k,
-            l,
-            m
-		})
+            m,
+        })
     }
 }
 
-impl<'a> Iterator for SuperkmersIterator {
+impl Iterator for SuperkmersIterator {
     type Item = Superkmer;
 
     fn next(&mut self) -> Option<Self::Item> {
-        if self.p >= self.min_positions.len() { return None; }
-        if self.p == 0 {
-            if self.m < self.k { return None; }
-            let (start_pos, mint) = self.min_positions[0];
-            let (next_pos, _) = self.min_positions[1];
-            self.p += 1;
-            return Some(Superkmer {
-                start: 0 as usize,
-                mint: mint as u32,
-                size: (next_pos as usize + self.k - 1 - start_pos as usize) as u8,
-                mpos: start_pos as u8,
-                rc: false,
-            });
+        if self.p >= self.min_positions.len() {
+            return None;
         }
-        else {
-            if self.p < self.min_positions.len() - 1 {
-                let (start_pos, mint) = self.min_positions[self.p];
-                let (_next_pos, _) = self.min_positions[self.p+1];
-                //let mut end : usize= next_pos as usize + self.k - 1;
-                let mut end : usize = start_pos as usize + self.k as usize - self.l;
-                if end >= self.m { end = (self.m-1) as usize; }
-                //println!("start_pos k l {} {} {}",start_pos,self.k,self.l);
-                let start = start_pos as usize; // probably not right
-                self.p += 1;
-                return Some(Superkmer {
-                    start: start as usize,
-                    mint: mint as u32,
-                    size: (end as usize - start) as u8,
-                    mpos: start_pos as u8,
-                    rc: false,
-                });
-            }
-            else {
-                self.p += 1;
-                return Some(Superkmer {
-                    start: 0 as usize,
-                    mint: 0 as u32,
-                    size: 0 as u8,
-                    mpos: 0 as u8,
-                    rc: false,
-                });
-            }
-        }
+
+        let (start_pos, min_abs_pos, min_kmer) = self.min_positions[self.p];
+
+        let size = if self.p < self.min_positions.len() - 1 {
+            let (next_pos, _, _) = self.min_positions[self.p + 1];
+            next_pos + self.k - 1 - start_pos
+        } else {
+            self.m - start_pos
+        };
+
+        self.p += 1;
+
+        Some(Superkmer {
+            start: start_pos,
+            mint: min_kmer as u32,
+            size: size as u8,
+            mpos: (min_abs_pos - start_pos) as u8,
+            rc: false,
+        })
     }
 }
-

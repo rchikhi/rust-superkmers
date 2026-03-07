@@ -74,7 +74,9 @@ impl<'a> SuperkmersIterator<'a> {
 		let superkmer_iter: Box<dyn Iterator<Item = Superkmer>> = match l {
 			8 => {
 				let scanner8 = Scanner::new(dnastring, score8, k);
-				Box::new(scanner8.scan().into_iter().map(|msp| Superkmer {
+				let msps = scanner8.scan();
+				
+				Box::new(msps.into_iter().map(|msp| Superkmer {
 					start: msp.start as usize,
 					mint: msp.minimizer.to_u64() as u32,
 					size: msp.len as u8,

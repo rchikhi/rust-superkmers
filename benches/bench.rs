@@ -4,7 +4,8 @@
 extern crate criterion;
 
 use criterion::{Bencher, Criterion, Throughput, BenchmarkId, black_box};
-use rand::distributions::{Distribution, Uniform};
+use rand::Rng;
+use std::time::Duration;
 
 use nthash::{nthash, NtHashIterator};
 
@@ -17,11 +18,10 @@ use debruijn::msp::Scanner;
 fn superkmers_bench(c: &mut Criterion) {
     let k = 31;
     let m = 8;
-    let range = Uniform::from(0..4);
-    let mut rng = rand::thread_rng();
+    let mut rng = rand::rng();
     let seq_len = 150;
     let seq = (0..seq_len)
-        .map(|_| match range.sample(&mut rng) {
+        .map(|_| match rng.random_range(0..4) {
             0 => 'A',
             1 => 'C',
             2 => 'G',
@@ -121,5 +121,12 @@ fn superkmers_bench(c: &mut Criterion) {
     group.finish();
 }
 
-criterion_group!(benches, superkmers_bench);
+criterion_group!{name = benches;
+    config = Criterion::default()
+        // from Ragnar
+        // Make sure that benchmarks are fast.
+        .warm_up_time(Duration::from_millis(500))
+        .measurement_time(Duration::from_millis(2000))
+        .sample_size(10);
+    targets = superkmers_bench}
 criterion_main!(benches);
