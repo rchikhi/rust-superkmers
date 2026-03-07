@@ -2,7 +2,21 @@ use nthash::NtHashIterator;
 use crate::utils::revcomp;
 use std::collections::VecDeque;
 use colored::Colorize;
-use crate::Superkmer; 
+use crate::Superkmer;
+
+/// Extract superkmers, splitting on N/n characters.
+pub fn superkmers_with_n(read: &[u8], k: usize, l: usize) -> Vec<Superkmer> {
+    let fragments = crate::utils::split_on_n(read, k);
+    let mut all = Vec::new();
+    for (offset, fragment) in fragments {
+        let iter = SuperkmersIterator::new(fragment, k, l);
+        for mut sk in iter {
+            sk.start += offset;
+            all.push(sk);
+        }
+    }
+    all
+}
 
 pub struct SuperkmersIterator<'a> {
     read: &'a [u8],

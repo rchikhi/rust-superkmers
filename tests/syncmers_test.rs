@@ -2,6 +2,7 @@ use std::fs;
 use debruijn::dna_string::DnaString;
 use rand::Rng;
 use rust_superkmers::Superkmer;
+use rust_superkmers::utils::split_on_n;
 
 fn random_dna(len: usize) -> String {
     let bases = [b'A', b'C', b'G', b'T'];
@@ -203,4 +204,99 @@ fn test_long_random_sequences() {
             assert_tiling(&superkmers, len, k);
         }
     }
+}
+
+#[test]
+fn test_split_on_n_basic() {
+    let seq = b"ACGTNNNTACG";
+    let frags = split_on_n(seq, 1);
+    assert_eq!(frags.len(), 2);
+    assert_eq!(frags[0], (0, &b"ACGT"[..]));
+    assert_eq!(frags[1], (7, &b"TACG"[..]));
+
+    // min_len filtering
+    let frags = split_on_n(seq, 5);
+    assert_eq!(frags.len(), 0);
+
+    // no N's
+    let seq = b"ACGTACGT";
+    let frags = split_on_n(seq, 1);
+    assert_eq!(frags.len(), 1);
+    assert_eq!(frags[0], (0, &b"ACGTACGT"[..]));
+}
+
+#[test]
+fn test_n_splitting_iteratorsyncmers2() {
+    let k = 21;
+    let l = 8;
+
+    // Build a sequence with N's in the middle
+    let left = random_dna(50);
+    let right = random_dna(50);
+    let seq_with_n = format!("{}NNNNN{}", left, right);
+
+    // new_with_n on the combined sequence
+    let (_, iter) = rust_superkmers::iteratorsyncmers2::SuperkmersIterator::new_with_n(
+        seq_with_n.as_bytes(), k, l);
+    let superkmers_split: Vec<Superkmer> = iter.collect();
+
+    // Process each fragment independently with new (no N)
+    let (_, iter_left) = rust_superkmers::iteratorsyncmers2::SuperkmersIterator::new(
+        left.as_bytes(), k, l);
+    let left_sks: Vec<Superkmer> = iter_left.collect();
+
+    let (_, iter_right) = rust_superkmers::iteratorsyncmers2::SuperkmersIterator::new(
+        right.as_bytes(), k, l);
+    let right_sks: Vec<Superkmer> = iter_right.collect();
+
+    // Same number of superkmers
+    assert_eq!(superkmers_split.len(), left_sks.len() + right_sks.len(),
+        "N-split should produce same superkmers as processing fragments independently");
+
+    // Left fragment superkmers should match exactly
+    for (a, b) in superkmers_split.iter().zip(left_sks.iter()) {
+        assert_eq!(a.start, b.start);
+        assert_eq!(a.size, b.size);
+        assert_eq!(a.mint, b.mint);
+        assert_eq!(a.mpos, b.mpos);
+    }
+
+    // Right fragment superkmers should match with offset
+    let right_offset = left.len() + 5; // 5 N's
+    for (a, b) in superkmers_split[left_sks.len()..].iter().zip(right_sks.iter()) {
+        assert_eq!(a.start, b.start + right_offset);
+        assert_eq!(a.size, b.size);
+        assert_eq!(a.mint, b.mint);
+        assert_eq!(a.mpos, b.mpos);
+    }
+}
+
+#[test]
+fn test_n_at_edges() {
+    let k = 21;
+    let l = 8;
+    let dna = random_dna(60);
+
+    // N's at start
+    let seq = format!("NNN{}", dna);
+    let (_, iter) = rust_superkmers::iteratorsyncmers2::SuperkmersIterator::new_with_n(
+        seq.as_bytes(), k, l);
+    let sks: Vec<Superkmer> = iter.collect();
+    assert!(sks.iter().all(|sk| sk.start >= 3), "no superkmer should start before the N's");
+
+    // N's at end
+    let seq = format!("{}NNN", dna);
+    let (_, iter) = rust_superkmers::iteratorsyncmers2::SuperkmersIterator::new_with_n(
+        seq.as_bytes(), k, l);
+    let sks: Vec<Superkmer> = iter.collect();
+    assert!(sks.iter().all(|sk| (sk.start + sk.size as usize) <= dna.len()),
+        "no superkmer should extend into trailing N's");
+
+    // Fragment too short to produce k-mers
+    let seq = format!("ACGTNNNNN{}", dna);
+    let (_, iter) = rust_superkmers::iteratorsyncmers2::SuperkmersIterator::new_with_n(
+        seq.as_bytes(), k, l);
+    let sks: Vec<Superkmer> = iter.collect();
+    // "ACGT" is too short for k=21, should only get superkmers from the right fragment
+    assert!(sks.iter().all(|sk| sk.start >= 9));
 }

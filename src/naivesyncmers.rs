@@ -8,6 +8,21 @@ pub fn extract_superkmers(read: &[u8], k: usize, l: usize) -> (Vec<Superkmer>, V
     extract_superkmers_with_options(read, k, l, true) // Default to rightmost
 }
 
+/// Extract superkmers, splitting on N/n characters.
+#[allow(dead_code)]
+pub fn extract_superkmers_with_n(read: &[u8], k: usize, l: usize) -> (Vec<Superkmer>, Vec<SuperkmerVerbose>) {
+    let fragments = crate::utils::split_on_n(read, k);
+    let mut all_superkmers = Vec::new();
+    let mut all_verbose = Vec::new();
+    for (offset, fragment) in fragments {
+        let (mut sks, mut sks_v) = extract_superkmers(fragment, k, l);
+        for sk in &mut sks { sk.start += offset; }
+        all_superkmers.append(&mut sks);
+        all_verbose.append(&mut sks_v);
+    }
+    (all_superkmers, all_verbose)
+}
+
 // a naive O(nk) superkmer implementation that stores all superkmers of a sequence in a vector
 // with option to select leftmost or rightmost syncmer as minimizer
 #[allow(dead_code)]

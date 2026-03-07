@@ -4,6 +4,21 @@ use debruijn::kmer::{Kmer8, Kmer10, Kmer12};
 use debruijn::Kmer;
 use debruijn::msp::Scanner;
 
+/// Extract superkmers from ASCII sequence, splitting on N/n characters.
+pub fn superkmers_with_n(seq: &[u8], k: usize, l: usize) -> Vec<Superkmer> {
+    let fragments = crate::utils::split_on_n(seq, k);
+    let mut all = Vec::new();
+    for (offset, fragment) in fragments {
+        let dnastring = DnaString::from_acgt_bytes(fragment).to_bytes();
+        let iter = SuperkmersIterator::new(&dnastring, k, l);
+        for mut sk in iter {
+            sk.start += offset;
+            all.push(sk);
+        }
+    }
+    all
+}
+
 pub struct SuperkmersIterator<'a> {
     iter: Box<dyn Iterator<Item = Superkmer> + 'a>,
 }

@@ -224,82 +224,109 @@ impl PartialOrd for MinPos {
     }
 }
 
+fn bitpack_fragment(fragment: &[u8]) -> Vec<u64> {
+    let mut storage = Vec::new();
+    let mut buffer = [b'A'; 32];
+    #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+    {
+        if is_x86_feature_detected!("avx2") {
+            for chunk in fragment.chunks(32) {
+                if chunk.len() < 32 {
+                    buffer[..chunk.len()].copy_from_slice(chunk);
+                    let (conv_chunk, _) = unsafe { convert_bases(&buffer) };
+                    let packed = unsafe { pack_32_bases(conv_chunk) };
+                    storage.push(packed);
+                } else {
+                    let (conv_chunk, _) = unsafe { convert_bases(chunk) };
+                    let packed = unsafe { pack_32_bases(conv_chunk) };
+                    storage.push(packed);
+                }
+            }
+        }
+    }
+    storage
+}
+
+/// Run MSP sliding window on a single fragment, returning (kmer_start, minimizer_pos, minimizer_kmer, fragment_end).
+/// All positions are absolute (offset already added).
+fn msp_minimizer_positions(storage: &[u64], frag_len: usize, k: usize, l: usize, offset: usize) -> Vec<(usize, usize, usize, usize)> {
+    let score = |kmer_val: usize| -> usize { !SYNCMERS_8[kmer_val] as usize };
+
+    let mp = |pos: usize| -> MinPos {
+        let kmer = get_kmer_value(storage, pos, l);
+        let val = score(kmer);
+        MinPos { val, pos, kmer }
+    };
+
+    let find_min = |start: usize, stop: usize| -> MinPos {
+        let mut min_pos = mp(start);
+        for pos in (start + 1)..=stop {
+            let current = mp(pos);
+            min_pos = std::cmp::min(min_pos, current);
+        }
+        min_pos
+    };
+
+    let frag_end = offset + frag_len;
+    let mut min_positions: Vec<(usize, usize, usize, usize)> = Vec::new();
+
+    if frag_len >= k {
+        let mut min_pos = find_min(0, k - l);
+        min_positions.push((offset, min_pos.pos + offset, min_pos.kmer, frag_end));
+
+        for i in 1..(frag_len - k + 1) {
+            let end_pos = mp(i + k - l);
+
+            if i > min_pos.pos {
+                min_pos = find_min(i, i + k - l);
+                min_positions.push((i + offset, min_pos.pos + offset, min_pos.kmer, frag_end));
+            } else if end_pos.val < min_pos.val {
+                min_pos = end_pos;
+                min_positions.push((i + offset, min_pos.pos + offset, min_pos.kmer, frag_end));
+            }
+        }
+    }
+
+    min_positions
+}
+
 pub struct SuperkmersIterator {
-    min_positions: Vec<(usize, usize, usize)>, // (kmer_start_i, minimizer_pos, minimizer_kmer_value)
+    min_positions: Vec<(usize, usize, usize, usize)>, // (kmer_start, minimizer_pos, minimizer_kmer, fragment_end)
     p: usize,
     k: usize,
-    m: usize,
 }
 
 impl SuperkmersIterator {
+    /// Process a sequence assumed to contain no N characters.
     pub fn new(seq_str: &[u8], k: usize, l: usize) -> (Vec<u64>, Self) {
-        let m = seq_str.len();
-        let mut storage: Vec<u64> = Vec::new();
-        let mut buffer = [b'A'; 32];
-
-        // STEP 1: Bit-pack the sequence with AVX2
-        #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
-        {
-            if is_x86_feature_detected!("avx2") {
-                for chunk in seq_str.chunks(32) {
-                    if chunk.len() < 32 {
-                        buffer[..chunk.len()].copy_from_slice(chunk);
-                        let (conv_chunk, _) = unsafe { convert_bases(&buffer) };
-                        let packed = unsafe { pack_32_bases(conv_chunk) };
-                        storage.push(packed);
-                    } else {
-                        let (conv_chunk, _) = unsafe { convert_bases(chunk) };
-                        let packed = unsafe { pack_32_bases(conv_chunk) };
-                        storage.push(packed);
-                    }
-                }
-            }
-        }
-
-        // STEP 2: MSP sliding window to find minimizer change points
-        let score = |kmer_val: usize| -> usize { !SYNCMERS_8[kmer_val] as usize };
-
-        let mp = |pos: usize| -> MinPos {
-            let kmer = get_kmer_value(&storage, pos, l);
-            let val = score(kmer);
-            MinPos { val, pos, kmer }
-        };
-
-        let find_min = |start: usize, stop: usize| -> MinPos {
-            let mut min_pos = mp(start);
-            for pos in (start + 1)..=stop {
-                let current = mp(pos);
-                min_pos = std::cmp::min(min_pos, current);
-            }
-            min_pos
-        };
-
-        let mut min_positions: Vec<(usize, usize, usize)> = Vec::with_capacity(16);
-
-        if m >= k {
-            let mut min_pos = find_min(0, k - l);
-            min_positions.push((0, min_pos.pos, min_pos.kmer));
-
-            for i in 1..(m - k + 1) {
-                let end_pos = mp(i + k - l);
-
-                if i > min_pos.pos {
-                    // Old minimum fell out of window, rescan
-                    min_pos = find_min(i, i + k - l);
-                    min_positions.push((i, min_pos.pos, min_pos.kmer));
-                } else if end_pos.val < min_pos.val {
-                    // New l-mer is strictly better
-                    min_pos = end_pos;
-                    min_positions.push((i, min_pos.pos, min_pos.kmer));
-                }
-            }
-        }
+        let storage = bitpack_fragment(seq_str);
+        let min_positions = msp_minimizer_positions(&storage, seq_str.len(), k, l, 0);
 
         (storage, SuperkmersIterator {
             min_positions,
             p: 0,
             k,
-            m,
+        })
+    }
+
+    /// Process a sequence that may contain N/n characters.
+    /// Splits on N's so superkmers never span across them.
+    pub fn new_with_n(seq_str: &[u8], k: usize, l: usize) -> (Vec<u64>, Self) {
+        let fragments = crate::utils::split_on_n(seq_str, k);
+        let full_storage = bitpack_fragment(seq_str);
+
+        let mut all_min_positions: Vec<(usize, usize, usize, usize)> = Vec::new();
+
+        for (offset, fragment) in &fragments {
+            let frag_storage = bitpack_fragment(fragment);
+            let positions = msp_minimizer_positions(&frag_storage, fragment.len(), k, l, *offset);
+            all_min_positions.extend(positions);
+        }
+
+        (full_storage, SuperkmersIterator {
+            min_positions: all_min_positions,
+            p: 0,
+            k,
         })
     }
 }
@@ -312,13 +339,19 @@ impl Iterator for SuperkmersIterator {
             return None;
         }
 
-        let (start_pos, min_abs_pos, min_kmer) = self.min_positions[self.p];
+        let (start_pos, min_abs_pos, min_kmer, frag_end) = self.min_positions[self.p];
 
         let size = if self.p < self.min_positions.len() - 1 {
-            let (next_pos, _, _) = self.min_positions[self.p + 1];
-            next_pos + self.k - 1 - start_pos
+            let (next_pos, _, _, next_frag_end) = self.min_positions[self.p + 1];
+            if next_frag_end == frag_end {
+                // Same fragment: superkmer extends to overlap with next k-mer
+                next_pos + self.k - 1 - start_pos
+            } else {
+                // Last superkmer in this fragment
+                frag_end - start_pos
+            }
         } else {
-            self.m - start_pos
+            frag_end - start_pos
         };
 
         self.p += 1;
