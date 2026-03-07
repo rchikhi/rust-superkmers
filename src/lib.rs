@@ -7,6 +7,7 @@ pub mod iteratormsp;
 pub mod syncmers;
 pub mod iteratorsyncmersmsp;
 pub mod iteratorsyncmers2;
+pub mod iteratorkmc2;
 pub mod naivesyncmers;
 use std::cmp::Ordering;
 
