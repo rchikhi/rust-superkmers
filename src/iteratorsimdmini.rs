@@ -40,12 +40,24 @@ fn canonical_lmer_index(ascii: &[u8], pos: usize, l: usize) -> (usize, bool) {
     (canonical as usize, is_rc)
 }
 
+/// Encode forward l-mer from ASCII bytes (no canonicalization).
+#[inline]
+fn forward_lmer_index(ascii: &[u8], pos: usize, l: usize) -> usize {
+    let mut fwd = 0usize;
+    for i in 0..l {
+        let base = ASCII_TO_2BIT[ascii[pos + i] as usize] as usize;
+        fwd = (fwd << 2) | base;
+    }
+    fwd
+}
+
 /// Collect superkmers from a single N-free fragment using SIMD syncmer detection.
 fn superkmers_from_fragment(
     ascii_slice: &[u8],
     k: usize,
     l: usize,
     offset: usize,
+    canonical: bool,
     results: &mut Vec<Superkmer>,
 ) {
     use simd_minimizers::packed_seq::AsciiSeq;
@@ -99,14 +111,18 @@ fn superkmers_from_fragment(
                 let size = end - start;
                 let mpos_fwd = curr_min_pos as usize - start;
 
-                let (mint, need_rc) = canonical_lmer_index(ascii_slice, curr_min_pos as usize, l);
+                let (mint, rc) = if canonical {
+                    canonical_lmer_index(ascii_slice, curr_min_pos as usize, l)
+                } else {
+                    (forward_lmer_index(ascii_slice, curr_min_pos as usize, l), false)
+                };
 
                 results.push(Superkmer {
                     start: start + offset,
                     mint: mint as u32,
                     size: size as u8,
                     mpos: mpos_fwd as u8,
-                    rc: need_rc,
+                    rc,
                 });
             }
 
@@ -155,20 +171,38 @@ pub struct SuperkmersIterator {
 impl SuperkmersIterator {
     /// Process a sequence assumed to contain no N characters.
     pub fn new(seq: &[u8], k: usize, l: usize) -> Self {
-        let mut superkmers = Vec::new();
-        superkmers_from_fragment(seq, k, l, 0, &mut superkmers);
-        SuperkmersIterator { superkmers, pos: 0 }
+        Self::new_inner(seq, k, l, true)
     }
 
     /// Process a sequence that may contain N/n characters.
     /// Splits on N's so superkmers never span across them.
     pub fn new_with_n(seq: &[u8], k: usize, l: usize) -> Self {
+        Self::new_with_n_inner(seq, k, l, true)
+    }
+
+    fn new_inner(seq: &[u8], k: usize, l: usize, canonical: bool) -> Self {
+        let mut superkmers = Vec::new();
+        superkmers_from_fragment(seq, k, l, 0, canonical, &mut superkmers);
+        SuperkmersIterator { superkmers, pos: 0 }
+    }
+
+    fn new_with_n_inner(seq: &[u8], k: usize, l: usize, canonical: bool) -> Self {
         let fragments = crate::utils::split_on_n(seq, k);
         let mut superkmers = Vec::new();
         for (offset, fragment) in &fragments {
-            superkmers_from_fragment(fragment, k, l, *offset, &mut superkmers);
+            superkmers_from_fragment(fragment, k, l, *offset, canonical, &mut superkmers);
         }
         SuperkmersIterator { superkmers, pos: 0 }
+    }
+
+    /// Return a non-canonical version (forward-strand mint, rc=false).
+    pub fn non_canonical(seq: &[u8], k: usize, l: usize) -> Self {
+        Self::new_inner(seq, k, l, false)
+    }
+
+    /// Non-canonical version with N-splitting.
+    pub fn non_canonical_with_n(seq: &[u8], k: usize, l: usize) -> Self {
+        Self::new_with_n_inner(seq, k, l, false)
     }
 }
 

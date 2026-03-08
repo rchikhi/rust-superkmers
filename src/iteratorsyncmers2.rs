@@ -159,6 +159,7 @@ pub struct SuperkmersIterator {
     p: usize,
     k: usize,
     l: usize,
+    canonical: bool,
 }
 
 impl SuperkmersIterator {
@@ -173,6 +174,7 @@ impl SuperkmersIterator {
             p: 0,
             k,
             l,
+            canonical: true,
         })
     }
 
@@ -196,7 +198,14 @@ impl SuperkmersIterator {
             p: 0,
             k,
             l,
+            canonical: true,
         })
+    }
+
+    /// Disable canonical mint (use forward-strand l-mer, rc=false).
+    pub fn non_canonical(mut self) -> Self {
+        self.canonical = false;
+        self
     }
 }
 
@@ -225,13 +234,17 @@ impl Iterator for SuperkmersIterator {
 
         self.p += 1;
 
-        let (canonical, is_rc) = canonical_table(self.l)[min_kmer];
+        let (mint, rc) = if self.canonical {
+            canonical_table(self.l)[min_kmer]
+        } else {
+            (min_kmer as u32, false)
+        };
         Some(Superkmer {
             start: start_pos,
-            mint: canonical,
+            mint,
             size: size as u8,
             mpos: (min_abs_pos - start_pos) as u8,
-            rc: is_rc,
+            rc,
         })
     }
 }
