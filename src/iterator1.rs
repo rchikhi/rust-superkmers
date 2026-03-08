@@ -147,14 +147,14 @@ impl<'a> Iterator for SuperkmersIterator<'a> {
             start: 0,
             size: 0,
             mpos: 0,
-            rc: false
+            mint_is_rc: false
         };
         self.start = self.end - self.k;
         return Some(superkmer);
         */ 
 
-        let rc :bool;
-        (mpos, rc) = 
+        let mint_is_rc :bool;
+        (mpos, mint_is_rc) =
           normalize_mpos(self.read, self.start, self.end-1, mpos, self.l, mm);
 
         if verbose
@@ -192,9 +192,9 @@ impl<'a> Iterator for SuperkmersIterator<'a> {
             mint: 0, // don't record the minimizer here
             size: (self.end-1-self.start).try_into().unwrap(),
             mpos: mpos.try_into().unwrap(),
-            rc
+            mint_is_rc
         };
-        
+
         self.start = self.end - self.k;
         Some(superkmer)
     }
@@ -205,19 +205,19 @@ fn normalize_mpos(read: &[u8], start: usize, end: usize, mpos: usize, l: usize, 
     -> (usize, bool)
 {
     let mut mpos = mpos;
-    let mut rc = false;
+    let mut mint_is_rc = false;
     let len = end-start;
     // if multiple minimizers, explore whole seq until mpos, otherwise just normalize by looking at revcomp
     if ! mm {
         if len-(mpos+l) < mpos {
             mpos = len-(mpos+l);
-            rc = true;
+            mint_is_rc = true;
         }
         if len-(mpos+l) == mpos {
             let sequence = std::str::from_utf8(&read[start..end]).unwrap();
             let sequence_rc = revcomp(&sequence);
             if sequence_rc.as_str() < sequence {
-                rc = true;
+                mint_is_rc = true;
             }
         }
     }
@@ -231,19 +231,19 @@ fn normalize_mpos(read: &[u8], start: usize, end: usize, mpos: usize, l: usize, 
             let found_forward = sequence[i..i+l] == *minimizer  || sequence[i..i+l]  == *minimizer_rc;
             let found_rc      = sequence_rc[i..i+l] == *minimizer  || sequence_rc[i..i+l]  == *minimizer_rc;
             if found_forward || found_rc {
-                if found_forward && found_rc { 
-                    if sequence_rc < sequence { 
-                        rc = true;
+                if found_forward && found_rc {
+                    if sequence_rc < sequence {
+                        mint_is_rc = true;
                     }
-                } 
+                }
                 #[allow(unused_assignments)]
                 if found_rc {
-                    rc = true;
+                    mint_is_rc = true;
                 }
                 mpos = i;
                 break;
             }
         }
     }
-    (mpos, rc)
+    (mpos, mint_is_rc)
 }

@@ -216,9 +216,9 @@ impl Iterator for SuperkmersIterator {
         Some(Superkmer {
             start: start_pos,
             mint: min_kmer as u32,
-            size: size as u8,
-            mpos: (min_abs_pos - start_pos) as u8,
-            rc: false,
+            size: size as u16,
+            mpos: (min_abs_pos - start_pos) as u16,
+            mint_is_rc: false,
         })
     }
 }

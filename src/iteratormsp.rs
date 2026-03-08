@@ -47,9 +47,9 @@ impl<'a> SuperkmersIterator<'a> {
                 Box::new(scanner8.scan().into_iter().map(|msp| Superkmer {
                     start: msp.start as usize,
                     mint: msp.minimizer.to_u64() as u32,
-                    size: msp.len as u8,
-                    mpos: (msp.minimizer_pos - msp.start) as u8,
-                    rc: false,
+                    size: msp.len as u16,
+                    mpos: (msp.minimizer_pos - msp.start) as u16,
+                    mint_is_rc: false,
                 }))
             }
             10 => {
@@ -57,9 +57,9 @@ impl<'a> SuperkmersIterator<'a> {
                 Box::new(scanner10.scan().into_iter().map(|msp| Superkmer {
                     start: msp.start as usize,
                     mint: msp.minimizer.to_u64() as u32,
-                    size: msp.len as u8,
-                    mpos: (msp.minimizer_pos - msp.start) as u8,
-                    rc: false,
+                    size: msp.len as u16,
+                    mpos: (msp.minimizer_pos - msp.start) as u16,
+                    mint_is_rc: false,
                 }))
             }
             12 => {
@@ -67,9 +67,9 @@ impl<'a> SuperkmersIterator<'a> {
                 Box::new(scanner12.scan().into_iter().map(|msp| Superkmer {
                     start: msp.start as usize,
                     mint: msp.minimizer.to_u64() as u32,
-                    size: msp.len as u8,
-                    mpos: (msp.minimizer_pos - msp.start) as u8,
-                    rc: false,
+                    size: msp.len as u16,
+                    mpos: (msp.minimizer_pos - msp.start) as u16,
+                    mint_is_rc: false,
                 }))
             }
             _ => panic!("Unsupported l size for MSP iteration"),

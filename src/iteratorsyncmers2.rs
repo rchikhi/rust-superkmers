@@ -187,7 +187,7 @@ impl SuperkmersIterator {
         Self::new_with_n_inner(seq_str, k, l, true)
     }
 
-    /// Non-canonical version (forward-strand mint, rc=false).
+    /// Non-canonical version (forward-strand mint, mint_is_rc=false).
     pub fn non_canonical(seq_str: &[u8], k: usize, l: usize) -> Self {
         Self::new_inner(seq_str, k, l, false)
     }
@@ -266,7 +266,7 @@ impl Iterator for SuperkmersIterator {
 
         self.p += 1;
 
-        let (mint, rc) = if self.canonical {
+        let (mint, mint_is_rc) = if self.canonical {
             canonical_table(self.l)[min_kmer]
         } else {
             (min_kmer as u32, false)
@@ -274,9 +274,9 @@ impl Iterator for SuperkmersIterator {
         Some(Superkmer {
             start: start_pos,
             mint,
-            size: size as u8,
-            mpos: (min_abs_pos - start_pos) as u8,
-            rc,
+            size: size as u16,
+            mpos: (min_abs_pos - start_pos) as u16,
+            mint_is_rc,
         })
     }
 }

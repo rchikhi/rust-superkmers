@@ -119,7 +119,7 @@ fn superkmers_from_fragment(
                 let size = end - start;
                 let mpos_fwd = curr_min_pos as usize - start;
 
-                let (mint, rc) = if canonical {
+                let (mint, mint_is_rc) = if canonical {
                     canonical_lmer_index(ascii_slice, curr_min_pos as usize, l)
                 } else {
                     (forward_lmer_index(ascii_slice, curr_min_pos as usize, l), false)
@@ -128,9 +128,9 @@ fn superkmers_from_fragment(
                 results.push(Superkmer {
                     start: start + offset,
                     mint: mint as u32,
-                    size: size as u8,
-                    mpos: mpos_fwd as u8,
-                    rc,
+                    size: size as u16,
+                    mpos: mpos_fwd as u16,
+                    mint_is_rc,
                 });
             }
 
@@ -188,7 +188,7 @@ impl SuperkmersIterator {
         Self::new_with_n_inner(seq, k, l, true)
     }
 
-    /// Non-canonical version (forward-strand mint, rc=false).
+    /// Non-canonical version (forward-strand mint, mint_is_rc=false).
     pub fn non_canonical(seq: &[u8], k: usize, l: usize) -> Self {
         Self::new_inner(seq, k, l, false)
     }
@@ -236,7 +236,7 @@ impl Iterator for SuperkmersIterator {
             mint: self.superkmers[idx].mint,
             size: self.superkmers[idx].size,
             mpos: self.superkmers[idx].mpos,
-            rc: self.superkmers[idx].rc,
+            mint_is_rc: self.superkmers[idx].mint_is_rc,
         })
     }
 }

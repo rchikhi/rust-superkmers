@@ -43,15 +43,15 @@ lazy_static! {
 ///   `.non_canonical()` is used). Encoding: A=0, C=1, G=2, T=3, MSB-first.
 /// - `size` — length of the superkmer in bases (≥ k).
 /// - `mpos` — relative position of the minimizer within the superkmer (0-based offset from `start`).
-/// - `rc` — `true` if the canonical minimizer is the reverse complement of the forward-strand l-mer
+/// - `mint_is_rc` — `true` if the canonical minimizer is the reverse complement of the forward-strand l-mer
 ///   at position `start + mpos`. Always `false` when using `.non_canonical()`.
 #[derive(PartialEq, Eq, Hash, Debug)]
 pub struct Superkmer {
     pub start: usize,
     pub mint: u32,
-    pub size: u8,
-    pub mpos: u8,
-    pub rc: bool
+    pub size: u16,
+    pub mpos: u16,
+    pub mint_is_rc: bool
 }
 
 
@@ -97,13 +97,13 @@ impl Ord for SuperkmerVerbose {
 /// // Canonical mint (default) — RC-equivalent l-mers share the same bucket
 /// let iter = rust_superkmers::iteratorsyncmers2::SuperkmersIterator::new(seq, 21, 8);
 /// for sk in iter {
-///     println!("start={} mint={} size={} mpos={} rc={}", sk.start, sk.mint, sk.size, sk.mpos, sk.rc);
+///     println!("start={} mint={} size={} mpos={} mint_is_rc={}", sk.start, sk.mint, sk.size, sk.mpos, sk.mint_is_rc);
 /// }
 ///
-/// // Non-canonical — forward-strand mint, rc always false
+/// // Non-canonical — forward-strand mint, mint_is_rc always false
 /// let iter = rust_superkmers::iteratorsyncmers2::SuperkmersIterator::non_canonical(seq, 21, 8);
 /// for sk in iter {
-///     assert!(!sk.rc);
+///     assert!(!sk.mint_is_rc);
 /// }
 /// ```
 fn noop() {}

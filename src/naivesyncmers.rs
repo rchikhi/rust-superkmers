@@ -111,7 +111,7 @@ pub fn extract_superkmers_with_options(read: &[u8], k: usize, l: usize, use_righ
                 mint: 0, // don't record the minimizer here
                 size: (end-1-start).try_into().unwrap(),
                 mpos: new_mpos.try_into().unwrap(),
-                rc: new_sequence == sequence_rc,
+                mint_is_rc: new_sequence == sequence_rc,
             };
 
             let superkmer_verbose = SuperkmerVerbose {
@@ -153,7 +153,7 @@ pub fn extract_superkmers_with_options(read: &[u8], k: usize, l: usize, use_righ
             mint: 0, // don't record the minimizer here
             size: (read_len-start).try_into().unwrap(),
             mpos: new_mpos.try_into().unwrap(),
-            rc: new_sequence == sequence_rc
+            mint_is_rc: new_sequence == sequence_rc
         };
 
         let superkmer_verbose = SuperkmerVerbose {

@@ -602,8 +602,8 @@ mod simdmini {
                 si, sk.start, sk.mint, mpos_abs, canon);
 
             // 4. rc flag
-            assert_eq!(sk.rc, is_rc,
-                "superkmer {} (start={}): rc={} but expected {}", si, sk.start, sk.rc, is_rc);
+            assert_eq!(sk.mint_is_rc, is_rc,
+                "superkmer {} (start={}): rc={} but expected {}", si, sk.start, sk.mint_is_rc, is_rc);
 
             // 5. Minimizer is within every k-mer's window
             let num_kmers = sk.size as usize - k + 1;
@@ -698,7 +698,7 @@ mod simdmini {
                 let (expected_mint, expected_rc) = canonical_lmer_string(&upper, mpos_abs, l);
                 assert_eq!(sk.mint as usize, expected_mint,
                     "seed={} superkmer {}: mint mismatch at pos {}", seed, si, mpos_abs);
-                assert_eq!(sk.rc, expected_rc,
+                assert_eq!(sk.mint_is_rc, expected_rc,
                     "seed={} superkmer {}: rc mismatch at pos {}", seed, si, mpos_abs);
             }
         }
@@ -768,7 +768,7 @@ mod canonical_toggle {
             assert_eq!(c.mpos, nc.mpos, "mpos differs at {}", i);
 
             // Non-canonical must have rc=false
-            assert!(!nc.rc, "non-canonical rc should be false at {}", i);
+            assert!(!nc.mint_is_rc, "non-canonical rc should be false at {}", i);
 
             // Non-canonical mint is the forward-strand l-mer
             let fwd = encode_lmer(seq, c.start + c.mpos as usize, l);
@@ -781,7 +781,7 @@ mod canonical_toggle {
                 "canonical mint should be min(fwd, rc) at {}", i);
 
             // rc flag matches
-            assert_eq!(c.rc, rc < fwd,
+            assert_eq!(c.mint_is_rc, rc < fwd,
                 "canonical rc flag wrong at {}", i);
         }
     }
@@ -830,7 +830,7 @@ mod canonical_toggle {
             assert_eq!(c.start, nc.start);
             assert_eq!(c.size, nc.size);
             assert_eq!(c.mpos, nc.mpos);
-            assert!(!nc.rc);
+            assert!(!nc.mint_is_rc);
         }
     }
 
@@ -850,7 +850,7 @@ mod canonical_toggle {
             assert_eq!(c.start, nc.start, "start differs at {}", i);
             assert_eq!(c.size, nc.size, "size differs at {}", i);
             assert_eq!(c.mpos, nc.mpos, "mpos differs at {}", i);
-            assert!(!nc.rc, "non-canonical rc should be false at {}", i);
+            assert!(!nc.mint_is_rc, "non-canonical rc should be false at {}", i);
 
             let fwd = encode_lmer(seq, c.start + c.mpos as usize, l);
             assert_eq!(nc.mint as usize, fwd,
@@ -859,6 +859,8 @@ mod canonical_toggle {
             let rc = rc_lmer(fwd, l);
             assert_eq!(c.mint as usize, fwd.min(rc),
                 "canonical mint should be min(fwd, rc) at {}", i);
+            assert_eq!(c.mint_is_rc, rc < fwd,
+                "canonical rc flag wrong at {}", i);
         }
     }
 
@@ -888,7 +890,7 @@ mod canonical_toggle {
                 assert_eq!(c.start, nc.start, "start differs at {}", i);
                 assert_eq!(c.size, nc.size, "size differs at {}", i);
                 assert_eq!(c.mpos, nc.mpos, "mpos differs at {}", i);
-                assert!(!nc.rc, "non-canonical rc should be false at {}", i);
+                assert!(!nc.mint_is_rc, "non-canonical rc should be false at {}", i);
 
                 let (can_val, _) = canonical_lmer(seq, c.start + c.mpos as usize, l);
                 assert_eq!(c.mint as usize, can_val,
@@ -924,7 +926,7 @@ mod canonical_toggle {
                 assert_eq!(c.start, nc.start);
                 assert_eq!(c.size, nc.size);
                 assert_eq!(c.mpos, nc.mpos);
-                assert!(!nc.rc);
+                assert!(!nc.mint_is_rc);
             }
         }
 
@@ -959,7 +961,7 @@ mod canonical_toggle {
             if fwd == rc {
                 // Palindromic: both modes should give same mint, rc=false
                 assert_eq!(c.mint, nc.mint, "palindromic l-mer: mint should match");
-                assert!(!c.rc, "palindromic l-mer: canonical rc should be false");
+                assert!(!c.mint_is_rc, "palindromic l-mer: canonical rc should be false");
             }
         }
     }
