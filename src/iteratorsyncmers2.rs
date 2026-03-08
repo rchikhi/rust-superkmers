@@ -9,8 +9,8 @@
 //! let (storage, iter) = rust_superkmers::iteratorsyncmers2::SuperkmersIterator::new(seq, 21, 8);
 //! for sk in iter { /* canonical mint */ }
 //!
-//! let (_, iter) = rust_superkmers::iteratorsyncmers2::SuperkmersIterator::new(seq, 21, 8);
-//! for sk in iter.non_canonical() { /* forward-strand mint */ }
+//! let (_, iter) = rust_superkmers::iteratorsyncmers2::SuperkmersIterator::non_canonical(seq, 21, 8);
+//! for sk in iter { /* forward-strand mint */ }
 //! ```
 use crate::Superkmer;
 use lazy_static::lazy_static;
@@ -176,8 +176,27 @@ pub struct SuperkmersIterator {
 }
 
 impl SuperkmersIterator {
-    /// Process a sequence assumed to contain no N characters.
+    /// Process a sequence assumed to contain no N characters. Mint is canonical.
     pub fn new(seq_str: &[u8], k: usize, l: usize) -> (Vec<u64>, Self) {
+        Self::new_inner(seq_str, k, l, true)
+    }
+
+    /// Process a sequence that may contain N/n characters. Mint is canonical.
+    pub fn new_with_n(seq_str: &[u8], k: usize, l: usize) -> (Vec<u64>, Self) {
+        Self::new_with_n_inner(seq_str, k, l, true)
+    }
+
+    /// Non-canonical version (forward-strand mint, rc=false).
+    pub fn non_canonical(seq_str: &[u8], k: usize, l: usize) -> (Vec<u64>, Self) {
+        Self::new_inner(seq_str, k, l, false)
+    }
+
+    /// Non-canonical version with N-splitting.
+    pub fn non_canonical_with_n(seq_str: &[u8], k: usize, l: usize) -> (Vec<u64>, Self) {
+        Self::new_with_n_inner(seq_str, k, l, false)
+    }
+
+    fn new_inner(seq_str: &[u8], k: usize, l: usize, canonical: bool) -> (Vec<u64>, Self) {
         let storage = bitpack_fragment(seq_str);
         let scores = syncmer_scores(l);
         let min_positions = msp_minimizer_positions(&storage, seq_str.len(), k, l, 0, scores);
@@ -187,13 +206,11 @@ impl SuperkmersIterator {
             p: 0,
             k,
             l,
-            canonical: true,
+            canonical,
         })
     }
 
-    /// Process a sequence that may contain N/n characters.
-    /// Splits on N's so superkmers never span across them.
-    pub fn new_with_n(seq_str: &[u8], k: usize, l: usize) -> (Vec<u64>, Self) {
+    fn new_with_n_inner(seq_str: &[u8], k: usize, l: usize, canonical: bool) -> (Vec<u64>, Self) {
         let fragments = crate::utils::split_on_n(seq_str, k);
         let full_storage = bitpack_fragment(seq_str);
         let scores = syncmer_scores(l);
@@ -211,14 +228,8 @@ impl SuperkmersIterator {
             p: 0,
             k,
             l,
-            canonical: true,
+            canonical,
         })
-    }
-
-    /// Disable canonical mint (use forward-strand l-mer, rc=false).
-    pub fn non_canonical(mut self) -> Self {
-        self.canonical = false;
-        self
     }
 }
 

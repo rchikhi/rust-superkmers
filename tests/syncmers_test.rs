@@ -742,3 +742,225 @@ mod simdmini {
         assert_eq!(total_kmers, expected, "N-split coverage mismatch");
     }
 }
+
+// ---- canonical vs non-canonical tests ----
+
+mod canonical_toggle {
+    use super::{random_dna, encode_lmer, rc_lmer, canonical_lmer};
+    use rust_superkmers::Superkmer;
+    use debruijn::dna_string::DnaString;
+
+    /// Verify canonical vs non-canonical for iteratorsyncmers2:
+    /// same start/size/mpos, canonical mint = min(fwd, rc), non-canonical rc=false.
+    fn check_syncmers2(seq: &[u8], k: usize, l: usize) {
+        let (_, iter_c) = rust_superkmers::iteratorsyncmers2::SuperkmersIterator::new(seq, k, l);
+        let canonical: Vec<Superkmer> = iter_c.collect();
+
+        let (_, iter_nc) = rust_superkmers::iteratorsyncmers2::SuperkmersIterator::non_canonical(seq, k, l);
+        let non_canonical: Vec<Superkmer> = iter_nc.collect();
+
+        assert_eq!(canonical.len(), non_canonical.len(), "superkmer count differs");
+
+        for (i, (c, nc)) in canonical.iter().zip(non_canonical.iter()).enumerate() {
+            // Same superkmer boundaries
+            assert_eq!(c.start, nc.start, "start differs at {}", i);
+            assert_eq!(c.size, nc.size, "size differs at {}", i);
+            assert_eq!(c.mpos, nc.mpos, "mpos differs at {}", i);
+
+            // Non-canonical must have rc=false
+            assert!(!nc.rc, "non-canonical rc should be false at {}", i);
+
+            // Non-canonical mint is the forward-strand l-mer
+            let fwd = encode_lmer(seq, c.start + c.mpos as usize, l);
+            assert_eq!(nc.mint as usize, fwd,
+                "non-canonical mint should be forward l-mer at {}", i);
+
+            // Canonical mint is min(fwd, rc)
+            let rc = rc_lmer(fwd, l);
+            assert_eq!(c.mint as usize, fwd.min(rc),
+                "canonical mint should be min(fwd, rc) at {}", i);
+
+            // rc flag matches
+            assert_eq!(c.rc, rc < fwd,
+                "canonical rc flag wrong at {}", i);
+        }
+    }
+
+    #[test]
+    fn test_syncmers2_canonical_toggle_random() {
+        for k in [21, 31] {
+            for len in [50, 150, 1000] {
+                for seed in 0..5 {
+                    check_syncmers2(&random_dna(len, seed * 137 + 42), k, 8);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn test_syncmers2_canonical_toggle_l9() {
+        for seed in 0..5 {
+            check_syncmers2(&random_dna(200, seed + 100), 31, 9);
+        }
+    }
+
+    #[test]
+    fn test_syncmers2_canonical_toggle_homopolymer() {
+        for base in [b'A', b'C', b'G', b'T'] {
+            let seq: Vec<u8> = std::iter::repeat(base).take(100).collect();
+            check_syncmers2(&seq, 21, 8);
+        }
+    }
+
+    #[test]
+    fn test_syncmers2_canonical_toggle_with_n() {
+        let mut seq = random_dna(300, 42);
+        seq[100] = b'N';
+        seq[200] = b'N';
+        seq[201] = b'N';
+
+        let (_, iter_c) = rust_superkmers::iteratorsyncmers2::SuperkmersIterator::new_with_n(&seq, 31, 8);
+        let canonical: Vec<Superkmer> = iter_c.collect();
+
+        let (_, iter_nc) = rust_superkmers::iteratorsyncmers2::SuperkmersIterator::non_canonical_with_n(&seq, 31, 8);
+        let non_canonical: Vec<Superkmer> = iter_nc.collect();
+
+        assert_eq!(canonical.len(), non_canonical.len());
+        for (c, nc) in canonical.iter().zip(non_canonical.iter()) {
+            assert_eq!(c.start, nc.start);
+            assert_eq!(c.size, nc.size);
+            assert_eq!(c.mpos, nc.mpos);
+            assert!(!nc.rc);
+        }
+    }
+
+    /// Verify canonical vs non-canonical for iteratorsyncmersmsp.
+    fn check_syncmersmsp(seq: &[u8], k: usize, l: usize) {
+        let dnastring = DnaString::from_acgt_bytes(seq).to_bytes();
+
+        let iter_c = rust_superkmers::iteratorsyncmersmsp::SuperkmersIterator::new(&dnastring, k, l);
+        let canonical: Vec<Superkmer> = iter_c.collect();
+
+        let iter_nc = rust_superkmers::iteratorsyncmersmsp::SuperkmersIterator::non_canonical(&dnastring, k, l);
+        let non_canonical: Vec<Superkmer> = iter_nc.collect();
+
+        assert_eq!(canonical.len(), non_canonical.len(), "superkmer count differs");
+
+        for (i, (c, nc)) in canonical.iter().zip(non_canonical.iter()).enumerate() {
+            assert_eq!(c.start, nc.start, "start differs at {}", i);
+            assert_eq!(c.size, nc.size, "size differs at {}", i);
+            assert_eq!(c.mpos, nc.mpos, "mpos differs at {}", i);
+            assert!(!nc.rc, "non-canonical rc should be false at {}", i);
+
+            let fwd = encode_lmer(seq, c.start + c.mpos as usize, l);
+            assert_eq!(nc.mint as usize, fwd,
+                "non-canonical mint should be forward l-mer at {}", i);
+
+            let rc = rc_lmer(fwd, l);
+            assert_eq!(c.mint as usize, fwd.min(rc),
+                "canonical mint should be min(fwd, rc) at {}", i);
+        }
+    }
+
+    #[test]
+    fn test_syncmersmsp_canonical_toggle_random() {
+        for k in [21, 31] {
+            for seed in 0..5 {
+                check_syncmersmsp(&random_dna(200, seed * 73 + 11), k, 8);
+            }
+        }
+    }
+
+    #[cfg(feature = "simd-mini")]
+    mod simdmini_toggle {
+        use super::*;
+
+        fn check_simdmini(seq: &[u8], k: usize, l: usize) {
+            let iter_c = rust_superkmers::iteratorsimdmini::SuperkmersIterator::new(seq, k, l);
+            let canonical: Vec<Superkmer> = iter_c.collect();
+
+            let iter_nc = rust_superkmers::iteratorsimdmini::SuperkmersIterator::non_canonical(seq, k, l);
+            let non_canonical: Vec<Superkmer> = iter_nc.collect();
+
+            assert_eq!(canonical.len(), non_canonical.len(), "superkmer count differs");
+
+            for (i, (c, nc)) in canonical.iter().zip(non_canonical.iter()).enumerate() {
+                assert_eq!(c.start, nc.start, "start differs at {}", i);
+                assert_eq!(c.size, nc.size, "size differs at {}", i);
+                assert_eq!(c.mpos, nc.mpos, "mpos differs at {}", i);
+                assert!(!nc.rc, "non-canonical rc should be false at {}", i);
+
+                let (can_val, _) = canonical_lmer(seq, c.start + c.mpos as usize, l);
+                assert_eq!(c.mint as usize, can_val,
+                    "canonical mint wrong at {}", i);
+
+                let fwd = encode_lmer(seq, c.start + c.mpos as usize, l);
+                assert_eq!(nc.mint as usize, fwd,
+                    "non-canonical mint should be forward l-mer at {}", i);
+            }
+        }
+
+        #[test]
+        fn test_simdmini_canonical_toggle_random() {
+            for seed in 0..10 {
+                check_simdmini(&random_dna(300, seed * 53 + 7), 31, 9);
+            }
+        }
+
+        #[test]
+        fn test_simdmini_canonical_toggle_with_n() {
+            let mut seq = random_dna(300, 42);
+            seq[100] = b'N';
+            seq[200] = b'N';
+
+            let iter_c = rust_superkmers::iteratorsimdmini::SuperkmersIterator::new_with_n(&seq, 31, 9);
+            let canonical: Vec<Superkmer> = iter_c.collect();
+
+            let iter_nc = rust_superkmers::iteratorsimdmini::SuperkmersIterator::non_canonical_with_n(&seq, 31, 9);
+            let non_canonical: Vec<Superkmer> = iter_nc.collect();
+
+            assert_eq!(canonical.len(), non_canonical.len());
+            for (c, nc) in canonical.iter().zip(non_canonical.iter()) {
+                assert_eq!(c.start, nc.start);
+                assert_eq!(c.size, nc.size);
+                assert_eq!(c.mpos, nc.mpos);
+                assert!(!nc.rc);
+            }
+        }
+
+        #[test]
+        fn test_simdmini_canonical_toggle_homopolymer() {
+            for base in [b'A', b'C', b'G', b'T'] {
+                let seq: Vec<u8> = std::iter::repeat(base).take(100).collect();
+                check_simdmini(&seq, 31, 9);
+            }
+        }
+    }
+
+    /// Test palindromic l-mer: ACGT repeated (palindromic 4-mer). For l=8,
+    /// ACGTACGT has rc=ACGTACGT — a self-palindrome. Both modes should agree on mint.
+    #[test]
+    fn test_palindromic_minimizer() {
+        // ACGTACGT is palindromic (rc of ACGT is ACGT, so ACGTACGT rc = ACGTACGT)
+        // Build a sequence where this is likely to be a minimizer
+        let seq = b"ACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGT";
+        let k = 21;
+        let l = 8;
+
+        let (_, iter_c) = rust_superkmers::iteratorsyncmers2::SuperkmersIterator::new(seq, k, l);
+        let canonical: Vec<Superkmer> = iter_c.collect();
+
+        let (_, iter_nc) = rust_superkmers::iteratorsyncmers2::SuperkmersIterator::non_canonical(seq, k, l);
+        let non_canonical: Vec<Superkmer> = iter_nc.collect();
+
+        for (c, nc) in canonical.iter().zip(non_canonical.iter()) {
+            let fwd = encode_lmer(seq, c.start + c.mpos as usize, l);
+            let rc = rc_lmer(fwd, l);
+            if fwd == rc {
+                // Palindromic: both modes should give same mint, rc=false
+                assert_eq!(c.mint, nc.mint, "palindromic l-mer: mint should match");
+                assert!(!c.rc, "palindromic l-mer: canonical rc should be false");
+            }
+        }
+    }
+}

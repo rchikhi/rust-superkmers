@@ -101,8 +101,8 @@ impl Ord for SuperkmerVerbose {
 /// }
 ///
 /// // Non-canonical — forward-strand mint, rc always false
-/// let (_, iter) = rust_superkmers::iteratorsyncmers2::SuperkmersIterator::new(seq, 21, 8);
-/// for sk in iter.non_canonical() {
+/// let (_, iter) = rust_superkmers::iteratorsyncmers2::SuperkmersIterator::non_canonical(seq, 21, 8);
+/// for sk in iter {
 ///     assert!(!sk.rc);
 /// }
 /// ```
