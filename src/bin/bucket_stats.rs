@@ -79,7 +79,7 @@ fn main() {
 fn process_seq(seq: &[u8], k: usize, l: usize, method: &str, bucket_counts: &mut HashMap<u32, u64>, total_kmers: &mut u64, total_superkmers: &mut u64) {
     match method {
         "syncmer" => {
-            let (_storage, iter) = iteratorsyncmers2::SuperkmersIterator::new_with_n(seq, k, l);
+            let iter = iteratorsyncmers2::SuperkmersIterator::new_with_n(seq, k, l);
             count_superkmers(iter, k, bucket_counts, total_kmers, total_superkmers);
         }
         "kmc2" => {

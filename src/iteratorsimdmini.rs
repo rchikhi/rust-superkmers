@@ -173,37 +173,22 @@ fn superkmers_from_fragment(
 
 pub struct SuperkmersIterator {
     superkmers: Vec<Superkmer>,
+    storage: Vec<u64>,
     pos: usize,
 }
 
 impl SuperkmersIterator {
-    /// Process a sequence assumed to contain no N characters.
+    /// Process a sequence assumed to contain no N characters. Mint is canonical.
     pub fn new(seq: &[u8], k: usize, l: usize) -> Self {
         Self::new_inner(seq, k, l, true)
     }
 
-    /// Process a sequence that may contain N/n characters.
-    /// Splits on N's so superkmers never span across them.
+    /// Process a sequence that may contain N/n characters. Mint is canonical.
     pub fn new_with_n(seq: &[u8], k: usize, l: usize) -> Self {
         Self::new_with_n_inner(seq, k, l, true)
     }
 
-    fn new_inner(seq: &[u8], k: usize, l: usize, canonical: bool) -> Self {
-        let mut superkmers = Vec::new();
-        superkmers_from_fragment(seq, k, l, 0, canonical, &mut superkmers);
-        SuperkmersIterator { superkmers, pos: 0 }
-    }
-
-    fn new_with_n_inner(seq: &[u8], k: usize, l: usize, canonical: bool) -> Self {
-        let fragments = crate::utils::split_on_n(seq, k);
-        let mut superkmers = Vec::new();
-        for (offset, fragment) in &fragments {
-            superkmers_from_fragment(fragment, k, l, *offset, canonical, &mut superkmers);
-        }
-        SuperkmersIterator { superkmers, pos: 0 }
-    }
-
-    /// Return a non-canonical version (forward-strand mint, rc=false).
+    /// Non-canonical version (forward-strand mint, rc=false).
     pub fn non_canonical(seq: &[u8], k: usize, l: usize) -> Self {
         Self::new_inner(seq, k, l, false)
     }
@@ -211,6 +196,28 @@ impl SuperkmersIterator {
     /// Non-canonical version with N-splitting.
     pub fn non_canonical_with_n(seq: &[u8], k: usize, l: usize) -> Self {
         Self::new_with_n_inner(seq, k, l, false)
+    }
+
+    /// Access the 2-bit packed representation of the input sequence.
+    pub fn storage(&self) -> &[u64] {
+        &self.storage
+    }
+
+    fn new_inner(seq: &[u8], k: usize, l: usize, canonical: bool) -> Self {
+        let storage = crate::utils::bitpack_fragment(seq);
+        let mut superkmers = Vec::new();
+        superkmers_from_fragment(seq, k, l, 0, canonical, &mut superkmers);
+        SuperkmersIterator { superkmers, storage, pos: 0 }
+    }
+
+    fn new_with_n_inner(seq: &[u8], k: usize, l: usize, canonical: bool) -> Self {
+        let storage = crate::utils::bitpack_fragment(seq);
+        let fragments = crate::utils::split_on_n(seq, k);
+        let mut superkmers = Vec::new();
+        for (offset, fragment) in &fragments {
+            superkmers_from_fragment(fragment, k, l, *offset, canonical, &mut superkmers);
+        }
+        SuperkmersIterator { superkmers, storage, pos: 0 }
     }
 }
 

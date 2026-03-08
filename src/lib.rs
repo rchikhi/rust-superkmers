@@ -95,13 +95,13 @@ impl Ord for SuperkmerVerbose {
 /// let seq = b"AACTGCACTGCACTGCACTGCACACTGCACTGCACTGCACTGCACACTGCACTGCACTGACTGCACTGCACTGCACTGCACTGCCTGC";
 ///
 /// // Canonical mint (default) — RC-equivalent l-mers share the same bucket
-/// let (_, iter) = rust_superkmers::iteratorsyncmers2::SuperkmersIterator::new(seq, 21, 8);
+/// let iter = rust_superkmers::iteratorsyncmers2::SuperkmersIterator::new(seq, 21, 8);
 /// for sk in iter {
 ///     println!("start={} mint={} size={} mpos={} rc={}", sk.start, sk.mint, sk.size, sk.mpos, sk.rc);
 /// }
 ///
 /// // Non-canonical — forward-strand mint, rc always false
-/// let (_, iter) = rust_superkmers::iteratorsyncmers2::SuperkmersIterator::non_canonical(seq, 21, 8);
+/// let iter = rust_superkmers::iteratorsyncmers2::SuperkmersIterator::non_canonical(seq, 21, 8);
 /// for sk in iter {
 ///     assert!(!sk.rc);
 /// }

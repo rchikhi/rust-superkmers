@@ -56,9 +56,9 @@ fn main() {
     }
 
 
-    let result = iteratorsyncmers2::SuperkmersIterator::new(contents.as_bytes(), k,m);
+    let iter = iteratorsyncmers2::SuperkmersIterator::new(contents.as_bytes(), k,m);
     println!("Iteratorsyncmers2:");
-    for superkmer in result.1 {
+    for superkmer in iter {
         println!("{:?}",superkmer);
     }
 

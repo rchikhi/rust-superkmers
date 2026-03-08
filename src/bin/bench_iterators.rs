@@ -44,7 +44,7 @@ fn main() {
         println!("\n--- seq_len={} k={} ({} iters) ---", len, k, iters);
 
         bench("syncmers2 (l=8)", &seq, iters, |s| {
-            let (_, iter) =
+            let iter =
                 rust_superkmers::iteratorsyncmers2::SuperkmersIterator::new(s, k, 8);
             let v: Vec<_> = iter.collect();
             std::hint::black_box(v);

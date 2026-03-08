@@ -6,10 +6,10 @@
 //!
 //! ```
 //! let seq = b"AACTGCACTGCACTGCACTGCACACTGCACTGCACTGCACTGCAC";
-//! let (storage, iter) = rust_superkmers::iteratorsyncmers2::SuperkmersIterator::new(seq, 21, 8);
+//! let iter = rust_superkmers::iteratorsyncmers2::SuperkmersIterator::new(seq, 21, 8);
 //! for sk in iter { /* canonical mint */ }
 //!
-//! let (_, iter) = rust_superkmers::iteratorsyncmers2::SuperkmersIterator::non_canonical(seq, 21, 8);
+//! let iter = rust_superkmers::iteratorsyncmers2::SuperkmersIterator::non_canonical(seq, 21, 8);
 //! for sk in iter { /* forward-strand mint */ }
 //! ```
 use crate::Superkmer;
@@ -169,6 +169,7 @@ fn msp_minimizer_positions(storage: &[u64], frag_len: usize, k: usize, l: usize,
 
 pub struct SuperkmersIterator {
     min_positions: Vec<(usize, usize, usize, usize)>, // (kmer_start, minimizer_pos, minimizer_kmer, fragment_end)
+    storage: Vec<u64>,
     p: usize,
     k: usize,
     l: usize,
@@ -177,40 +178,46 @@ pub struct SuperkmersIterator {
 
 impl SuperkmersIterator {
     /// Process a sequence assumed to contain no N characters. Mint is canonical.
-    pub fn new(seq_str: &[u8], k: usize, l: usize) -> (Vec<u64>, Self) {
+    pub fn new(seq_str: &[u8], k: usize, l: usize) -> Self {
         Self::new_inner(seq_str, k, l, true)
     }
 
     /// Process a sequence that may contain N/n characters. Mint is canonical.
-    pub fn new_with_n(seq_str: &[u8], k: usize, l: usize) -> (Vec<u64>, Self) {
+    pub fn new_with_n(seq_str: &[u8], k: usize, l: usize) -> Self {
         Self::new_with_n_inner(seq_str, k, l, true)
     }
 
     /// Non-canonical version (forward-strand mint, rc=false).
-    pub fn non_canonical(seq_str: &[u8], k: usize, l: usize) -> (Vec<u64>, Self) {
+    pub fn non_canonical(seq_str: &[u8], k: usize, l: usize) -> Self {
         Self::new_inner(seq_str, k, l, false)
     }
 
     /// Non-canonical version with N-splitting.
-    pub fn non_canonical_with_n(seq_str: &[u8], k: usize, l: usize) -> (Vec<u64>, Self) {
+    pub fn non_canonical_with_n(seq_str: &[u8], k: usize, l: usize) -> Self {
         Self::new_with_n_inner(seq_str, k, l, false)
     }
 
-    fn new_inner(seq_str: &[u8], k: usize, l: usize, canonical: bool) -> (Vec<u64>, Self) {
+    /// Access the 2-bit packed representation of the input sequence.
+    pub fn storage(&self) -> &[u64] {
+        &self.storage
+    }
+
+    fn new_inner(seq_str: &[u8], k: usize, l: usize, canonical: bool) -> Self {
         let storage = bitpack_fragment(seq_str);
         let scores = syncmer_scores(l);
         let min_positions = msp_minimizer_positions(&storage, seq_str.len(), k, l, 0, scores);
 
-        (storage, SuperkmersIterator {
+        SuperkmersIterator {
             min_positions,
+            storage,
             p: 0,
             k,
             l,
             canonical,
-        })
+        }
     }
 
-    fn new_with_n_inner(seq_str: &[u8], k: usize, l: usize, canonical: bool) -> (Vec<u64>, Self) {
+    fn new_with_n_inner(seq_str: &[u8], k: usize, l: usize, canonical: bool) -> Self {
         let fragments = crate::utils::split_on_n(seq_str, k);
         let full_storage = bitpack_fragment(seq_str);
         let scores = syncmer_scores(l);
@@ -223,13 +230,14 @@ impl SuperkmersIterator {
             all_min_positions.extend(positions);
         }
 
-        (full_storage, SuperkmersIterator {
+        SuperkmersIterator {
             min_positions: all_min_positions,
+            storage: full_storage,
             p: 0,
             k,
             l,
             canonical,
-        })
+        }
     }
 }
 

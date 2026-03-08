@@ -28,7 +28,7 @@ fn main() {
     let iter = rust_superkmers::iteratorsyncmersmsp::SuperkmersIterator::new(&dnastring, 31, 8);
     let syncmers_truth: Vec<Superkmer> = iter.collect();
 
-    let (_, iter) = rust_superkmers::iteratorsyncmers2::SuperkmersIterator::new(contents.as_bytes(), 31, 8);
+    let iter = rust_superkmers::iteratorsyncmers2::SuperkmersIterator::new(contents.as_bytes(), 31, 8);
     let syncmers_test: Vec<Superkmer> = iter.collect();
 
     let set1: HashSet<_> = syncmers_truth.into_iter().collect();

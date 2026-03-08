@@ -55,7 +55,7 @@ fn read_fasta_seq(path: &str) -> Vec<u8> {
 
 /// Collect superkmers from iteratorsyncmers2 and assert they tile the sequence.
 fn assert_syncmers2_tiling(seq: &[u8], k: usize, l: usize) {
-    let (_, iter) = rust_superkmers::iteratorsyncmers2::SuperkmersIterator::new(seq, k, l);
+    let iter = rust_superkmers::iteratorsyncmers2::SuperkmersIterator::new(seq, k, l);
     let superkmers: Vec<Superkmer> = iter.collect();
     assert_tiling(&superkmers, seq.len(), k);
 }
@@ -84,7 +84,7 @@ fn assert_implementations_match(seq: &[u8], k: usize, l: usize) {
     let iter_msp = rust_superkmers::iteratorsyncmersmsp::SuperkmersIterator::new(&dnastring, k, l);
     let msp: Vec<Superkmer> = iter_msp.collect();
 
-    let (_, iter2) = rust_superkmers::iteratorsyncmers2::SuperkmersIterator::new(seq, k, l);
+    let iter2 = rust_superkmers::iteratorsyncmers2::SuperkmersIterator::new(seq, k, l);
     let avx2: Vec<Superkmer> = iter2.collect();
 
     assert_superkmers_eq(&msp, &avx2, 0);
@@ -177,7 +177,7 @@ fn test_edge_case_exact_k_length() {
         let seq = random_dna(k, k as u64 * 7 + 13);
         assert_implementations_match(&seq, k, 8);
 
-        let (_, iter) = rust_superkmers::iteratorsyncmers2::SuperkmersIterator::new(
+        let iter = rust_superkmers::iteratorsyncmers2::SuperkmersIterator::new(
             &seq, k, 8);
         let superkmers: Vec<Superkmer> = iter.collect();
         assert_eq!(superkmers.len(), 1,
@@ -267,16 +267,16 @@ fn test_n_splitting_iteratorsyncmers2() {
     seq_with_n.extend_from_slice(&right);
 
     // new_with_n on the combined sequence
-    let (_, iter) = rust_superkmers::iteratorsyncmers2::SuperkmersIterator::new_with_n(
+    let iter = rust_superkmers::iteratorsyncmers2::SuperkmersIterator::new_with_n(
         &seq_with_n, k, l);
     let superkmers_split: Vec<Superkmer> = iter.collect();
 
     // Process each fragment independently with new (no N)
-    let (_, iter_left) = rust_superkmers::iteratorsyncmers2::SuperkmersIterator::new(
+    let iter_left = rust_superkmers::iteratorsyncmers2::SuperkmersIterator::new(
         &left, k, l);
     let left_sks: Vec<Superkmer> = iter_left.collect();
 
-    let (_, iter_right) = rust_superkmers::iteratorsyncmers2::SuperkmersIterator::new(
+    let iter_right = rust_superkmers::iteratorsyncmers2::SuperkmersIterator::new(
         &right, k, l);
     let right_sks: Vec<Superkmer> = iter_right.collect();
 
@@ -297,7 +297,7 @@ fn test_n_at_edges() {
     // N's at start
     let mut seq = b"NNN".to_vec();
     seq.extend_from_slice(&dna);
-    let (_, iter) = rust_superkmers::iteratorsyncmers2::SuperkmersIterator::new_with_n(
+    let iter = rust_superkmers::iteratorsyncmers2::SuperkmersIterator::new_with_n(
         &seq, k, l);
     let sks: Vec<Superkmer> = iter.collect();
     assert!(sks.iter().all(|sk| sk.start >= 3), "no superkmer should start before the N's");
@@ -305,7 +305,7 @@ fn test_n_at_edges() {
     // N's at end
     let mut seq = dna.clone();
     seq.extend_from_slice(b"NNN");
-    let (_, iter) = rust_superkmers::iteratorsyncmers2::SuperkmersIterator::new_with_n(
+    let iter = rust_superkmers::iteratorsyncmers2::SuperkmersIterator::new_with_n(
         &seq, k, l);
     let sks: Vec<Superkmer> = iter.collect();
     assert!(sks.iter().all(|sk| (sk.start + sk.size as usize) <= dna.len()),
@@ -314,7 +314,7 @@ fn test_n_at_edges() {
     // Fragment too short to produce k-mers
     let mut seq = b"ACGTNNNNN".to_vec();
     seq.extend_from_slice(&dna);
-    let (_, iter) = rust_superkmers::iteratorsyncmers2::SuperkmersIterator::new_with_n(
+    let iter = rust_superkmers::iteratorsyncmers2::SuperkmersIterator::new_with_n(
         &seq, k, l);
     let sks: Vec<Superkmer> = iter.collect();
     // "ACGT" is too short for k=21, should only get superkmers from the right fragment
@@ -443,7 +443,7 @@ mod syncmers2_correctness {
     fn check_correctness(seq: &[u8], k: usize, l: usize) {
         let naive = naive_superkmers(seq, k, l);
 
-        let (_, iter) = rust_superkmers::iteratorsyncmers2::SuperkmersIterator::new(seq, k, l);
+        let iter = rust_superkmers::iteratorsyncmers2::SuperkmersIterator::new(seq, k, l);
         let actual: Vec<Superkmer> = iter.collect();
 
         assert_eq!(naive.len(), actual.len(),
@@ -753,10 +753,10 @@ mod canonical_toggle {
     /// Verify canonical vs non-canonical for iteratorsyncmers2:
     /// same start/size/mpos, canonical mint = min(fwd, rc), non-canonical rc=false.
     fn check_syncmers2(seq: &[u8], k: usize, l: usize) {
-        let (_, iter_c) = rust_superkmers::iteratorsyncmers2::SuperkmersIterator::new(seq, k, l);
+        let iter_c = rust_superkmers::iteratorsyncmers2::SuperkmersIterator::new(seq, k, l);
         let canonical: Vec<Superkmer> = iter_c.collect();
 
-        let (_, iter_nc) = rust_superkmers::iteratorsyncmers2::SuperkmersIterator::non_canonical(seq, k, l);
+        let iter_nc = rust_superkmers::iteratorsyncmers2::SuperkmersIterator::non_canonical(seq, k, l);
         let non_canonical: Vec<Superkmer> = iter_nc.collect();
 
         assert_eq!(canonical.len(), non_canonical.len(), "superkmer count differs");
@@ -819,10 +819,10 @@ mod canonical_toggle {
         seq[200] = b'N';
         seq[201] = b'N';
 
-        let (_, iter_c) = rust_superkmers::iteratorsyncmers2::SuperkmersIterator::new_with_n(&seq, 31, 8);
+        let iter_c = rust_superkmers::iteratorsyncmers2::SuperkmersIterator::new_with_n(&seq, 31, 8);
         let canonical: Vec<Superkmer> = iter_c.collect();
 
-        let (_, iter_nc) = rust_superkmers::iteratorsyncmers2::SuperkmersIterator::non_canonical_with_n(&seq, 31, 8);
+        let iter_nc = rust_superkmers::iteratorsyncmers2::SuperkmersIterator::non_canonical_with_n(&seq, 31, 8);
         let non_canonical: Vec<Superkmer> = iter_nc.collect();
 
         assert_eq!(canonical.len(), non_canonical.len());
@@ -947,10 +947,10 @@ mod canonical_toggle {
         let k = 21;
         let l = 8;
 
-        let (_, iter_c) = rust_superkmers::iteratorsyncmers2::SuperkmersIterator::new(seq, k, l);
+        let iter_c = rust_superkmers::iteratorsyncmers2::SuperkmersIterator::new(seq, k, l);
         let canonical: Vec<Superkmer> = iter_c.collect();
 
-        let (_, iter_nc) = rust_superkmers::iteratorsyncmers2::SuperkmersIterator::non_canonical(seq, k, l);
+        let iter_nc = rust_superkmers::iteratorsyncmers2::SuperkmersIterator::non_canonical(seq, k, l);
         let non_canonical: Vec<Superkmer> = iter_nc.collect();
 
         for (c, nc) in canonical.iter().zip(non_canonical.iter()) {
