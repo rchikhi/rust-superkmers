@@ -2,7 +2,7 @@ use std::fs;
 use std::collections::HashSet;
 use std::hash::Hash;
 use std::fmt::Debug;
-use rust_superkmers::{Superkmer, naive, iterator1};
+use rust_superkmers::{Superkmer, naive, naive::superkmer_to_verbose, iterator1};
 use debruijn::dna_string::DnaString;
 
 fn compare_sets<T: Eq + Hash + Debug + std::cmp::Ord>(set1: HashSet<T>, set2: HashSet<T>) {
@@ -42,7 +42,7 @@ fn main() {
         for k in vec![17, 21, 31, 41] {
             let iter = iterator1::SuperkmersIterator::new(contents.as_bytes(), k, m);
             let iterator1_superkmers_verbose: Vec<_> = iter.into_iter().map(|superkmer| {
-                rust_superkmers::utils::superkmer_to_verbose(superkmer, &contents, m)
+                superkmer_to_verbose(superkmer, &contents, m)
             }).collect();
 
             let (_, iter_verbose) = naive::extract_superkmers(contents.as_bytes(), k, m);

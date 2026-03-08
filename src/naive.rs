@@ -1,6 +1,40 @@
-use crate::utils::revcomp;
 use nthash::NtHashIterator;
-use crate::{Superkmer,SuperkmerVerbose};
+use crate::Superkmer;
+use std::cmp::Ordering;
+
+pub fn revcomp(seq: &str) -> String {
+    std::str::from_utf8(&bio::alphabets::dna::revcomp(seq.as_bytes())).unwrap().to_string()
+}
+
+#[derive(PartialEq, Eq, Hash, Debug)]
+pub struct SuperkmerVerbose {
+    pub sequence: String,
+    pub minimizer: String,
+    pub mpos: usize,
+}
+
+impl PartialOrd for SuperkmerVerbose {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+impl Ord for SuperkmerVerbose {
+    fn cmp(&self, other: &Self) -> Ordering {
+        self.mpos.cmp(&other.mpos)
+    }
+}
+
+/// Convert a Superkmer to a SuperkmerVerbose with sequence and minimizer strings.
+///
+/// Only valid for `iterator1`/`naive`/`naivesyncmers` output, where `mint_is_rc`
+/// means "the sequence is in RC orientation".
+pub fn superkmer_to_verbose(superkmer: Superkmer, read: &String, l: usize) -> SuperkmerVerbose {
+    let sequence = &read[superkmer.start..superkmer.start+(superkmer.size as usize)];
+    let sequence = if superkmer.mint_is_rc { revcomp(sequence) } else { sequence.to_string() };
+    let mpos = superkmer.mpos as usize;
+    let minimizer = sequence[mpos..mpos+l].to_string();
+    SuperkmerVerbose { sequence, minimizer, mpos }
+}
 
 /// Extract superkmers, splitting on N/n characters.
 #[allow(dead_code)]
@@ -146,7 +180,7 @@ pub fn extract_superkmers(read: &[u8], k: usize, l: usize) -> (Vec<Superkmer>, V
     (super_kmers, super_kmers_verbose)
 }
 
-fn normalize_mpos(sequence: &String, sequence_rc: &String, minimizer: &String, minimizer_rc: &String, mpos: usize, l: usize, mm: bool)
+pub fn normalize_mpos(sequence: &String, sequence_rc: &String, minimizer: &String, minimizer_rc: &String, mpos: usize, l: usize, mm: bool)
     -> (String, String, String, String, usize)
 {
     let mut mpos = mpos;
@@ -170,13 +204,11 @@ fn normalize_mpos(sequence: &String, sequence_rc: &String, minimizer: &String, m
             let found_forward = sequence[i..i+l] == *minimizer  || sequence[i..i+l]  == *minimizer_rc;
             let found_rc      = sequence_rc[i..i+l] == *minimizer  || sequence_rc[i..i+l]  == *minimizer_rc;
             if found_forward || found_rc {
-                if found_forward && found_rc { 
-                    if sequence_rc < sequence { 
+                if found_forward && found_rc {
+                    if sequence_rc < sequence {
                         (sequence, sequence_rc) = (sequence_rc, sequence);
                     }
-                } 
-                #[allow(unused_assignments)]
-                if found_rc {
+                } else if found_rc {
                     (sequence, sequence_rc) = (sequence_rc, sequence);
                 }
                 mpos = i;

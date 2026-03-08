@@ -67,24 +67,6 @@ impl Ord for Superkmer {
     }
 }
 
-#[derive(PartialEq, Eq, Hash, Debug)]
-pub struct SuperkmerVerbose {
-    pub sequence: String,
-    pub minimizer: String,
-    pub mpos: usize,
-}
-
-
-impl PartialOrd for SuperkmerVerbose {
-    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-        Some(self.cmp(other))
-    }
-}
-impl Ord for SuperkmerVerbose {
-    fn cmp(&self, other: &Self) -> Ordering {
-        self.mpos.cmp(&other.mpos)
-    }
-}
 
 
 

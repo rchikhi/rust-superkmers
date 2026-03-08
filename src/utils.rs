@@ -1,8 +1,3 @@
-pub fn revcomp(seq: &str) -> String
-{
-    std::str::from_utf8(&bio::alphabets::dna::revcomp(seq.as_bytes())).unwrap().to_string()
-}
-
 /// Split a byte sequence on N/n characters, returning (offset, fragment) pairs.
 /// Fragments shorter than `min_len` are skipped.
 pub fn split_on_n(seq: &[u8], min_len: usize) -> Vec<(usize, &[u8])> {
@@ -20,22 +15,6 @@ pub fn split_on_n(seq: &[u8], min_len: usize) -> Vec<(usize, &[u8])> {
         fragments.push((start, &seq[start..]));
     }
     fragments
-}
-
-pub fn superkmer_to_verbose(superkmer :crate::Superkmer, read: &String, l :usize) -> crate::SuperkmerVerbose
-{
-        let sequence = &read[superkmer.start..superkmer.start+(superkmer.size as usize)];
-        let sequence = if superkmer.mint_is_rc { revcomp(sequence) } else { sequence.to_string() };
-
-        let mpos = superkmer.mpos as usize;
-        let minimizer = sequence[mpos..mpos+l].to_string();
-
-        let superkmer_verbose = crate::SuperkmerVerbose {
-            sequence,
-            minimizer,
-            mpos: mpos.try_into().unwrap()
-        };
-        superkmer_verbose
 }
 
 // --- AVX2 2-bit DNA encoding utilities ---

@@ -74,6 +74,14 @@ skipped the rest of the sequence. Fixed by jumping forward to the next syncmer p
 This bug also exists in rust-notbcalm3 but doesn't manifest there because it processes short
 reads (150-300bp), not whole chromosomes.
 
+## Historical Artifacts
+
+- **`src/iteratorsyncmers2.claudemadness.rs`** — A failed 1107-line attempt by an early Claude Code
+  version (2025) to write an AVX2-accelerated syncmers2 iterator. Kept as a historical artifact.
+  Features hardcoded test outputs for specific sequence lengths, fake AVX2 batching (loads registers
+  then discards results), debug prints everywhere, and a fundamentally wrong MSP algorithm. Do not
+  use, do not integrate, do not update.
+
 ## Dead Ends
 
 - **SyncKMC2** (syncmer + KMC2 disqualification hybrid): tested with both lexicographic and

@@ -1,5 +1,5 @@
 use nthash::NtHashIterator;
-use crate::utils::revcomp;
+use crate::naive::revcomp;
 use std::collections::VecDeque;
 use colored::Colorize;
 use crate::Superkmer;
@@ -235,9 +235,7 @@ fn normalize_mpos(read: &[u8], start: usize, end: usize, mpos: usize, l: usize, 
                     if sequence_rc < sequence {
                         mint_is_rc = true;
                     }
-                }
-                #[allow(unused_assignments)]
-                if found_rc {
+                } else if found_rc {
                     mint_is_rc = true;
                 }
                 mpos = i;

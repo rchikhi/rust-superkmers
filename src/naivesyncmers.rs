@@ -1,5 +1,5 @@
-use crate::utils::revcomp;
-use crate::{Superkmer,SuperkmerVerbose};
+use crate::Superkmer;
+use crate::naive::{revcomp, normalize_mpos, SuperkmerVerbose};
 
 // a naive O(nk) superkmer implementation that stores all superkmers of a sequence in a vector
 // (problematic for long chromosomes)
@@ -168,48 +168,4 @@ pub fn extract_superkmers_with_options(read: &[u8], k: usize, l: usize, use_righ
 
     //println!("Maximum RSS at end of superkmers extraction: {:?}GB", (get_memory_rusage() as f32) / 1024.0 / 1024.0 / 1024.0);    
     (super_kmers, super_kmers_verbose)
-}
-
-// this function is actually agnostic to minimizer scheme
-fn normalize_mpos(sequence: &String, sequence_rc: &String, minimizer: &String, minimizer_rc: &String, mpos: usize, l: usize, mm: bool)
-    -> (String, String, String, String, usize)
-{
-    let mut mpos = mpos;
-    let mut sequence = sequence;
-    let mut sequence_rc = sequence_rc;
-    let minimizer = minimizer;
-    let minimizer_rc = minimizer_rc;
-    // if multiple minimizers, explore whole seq until mpos, otherwise just normalize by looking at revcomp
-    if ! mm {
-        if sequence.len()-(mpos+l) < mpos {
-            (sequence, sequence_rc) = (sequence_rc, sequence);
-            mpos = sequence.len()-(mpos+l);
-        }
-        if sequence.len()-(mpos+l) == mpos && sequence_rc < sequence {
-            (sequence, sequence_rc) = (sequence_rc, sequence);
-        }
-    }
-    else
-    {
-        for i in 0..mpos {
-            let found_forward = sequence[i..i+l] == *minimizer  || sequence[i..i+l]  == *minimizer_rc;
-            let found_rc      = sequence_rc[i..i+l] == *minimizer  || sequence_rc[i..i+l]  == *minimizer_rc;
-            if found_forward || found_rc {
-                if found_forward && found_rc { 
-                    if sequence_rc < sequence { 
-                        (sequence, sequence_rc) = (sequence_rc, sequence);
-                    }
-                } 
-                #[allow(unused_assignments)]
-                if found_rc {
-                    (sequence, sequence_rc) = (sequence_rc, sequence);
-                }
-                mpos = i;
-                break;
-            }
-        }
-    }
-    let minimizer =  sequence[mpos..mpos+l].to_string();
-    let minimizer_rc = revcomp(&minimizer);
-    (sequence.to_string(), sequence_rc.to_string(), minimizer, minimizer_rc, mpos)
 }
