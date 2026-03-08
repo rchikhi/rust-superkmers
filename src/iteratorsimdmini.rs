@@ -1,8 +1,16 @@
-/// SIMD-accelerated syncmer-based superkmer iterator.
-///
-/// Uses `simd-minimizers` to find canonical closed syncmer positions via SIMD,
-/// then runs a rightmost-wins MSP sliding window to produce superkmers.
-/// Ported from rust-notbcalm3's simd-mini path.
+//! SIMD-accelerated syncmer-based superkmer iterator.
+//!
+//! Uses `simd-minimizers` to find canonical closed syncmer positions via SIMD,
+//! then runs a rightmost-wins MSP sliding window to produce superkmers.
+//! Requires odd l (e.g. l=9). Takes ASCII `&[u8]` input directly.
+//! Mint is canonical by default; use `SuperkmersIterator::non_canonical()` for
+//! forward-strand mint.
+//!
+//! ```ignore
+//! use rust_superkmers::iteratorsimdmini::SuperkmersIterator;
+//! let iter = SuperkmersIterator::new(seq, 31, 9);           // canonical
+//! let iter = SuperkmersIterator::non_canonical(seq, 31, 9); // forward-strand
+//! ```
 use crate::Superkmer;
 
 const SMER_SIZE: usize = 2; // syncmer's s parameter

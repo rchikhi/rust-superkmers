@@ -1,3 +1,14 @@
+//! Syncmer-scored MSP superkmer iterator using rust-debruijn's Scanner.
+//!
+//! Wraps debruijn's `Scanner` with syncmer scoring (l=8, 10, or 12).
+//! Input is 2-bit encoded bytes from `DnaString`. Mint is canonical by default;
+//! use `SuperkmersIterator::non_canonical()` for forward-strand mint.
+//!
+//! ```ignore
+//! use rust_superkmers::iteratorsyncmersmsp::SuperkmersIterator;
+//! let iter = SuperkmersIterator::new(&dnastring_bytes, 31, 8);           // canonical
+//! let iter = SuperkmersIterator::non_canonical(&dnastring_bytes, 31, 8); // forward-strand
+//! ```
 use crate::Superkmer;
 use debruijn::dna_string::DnaString;
 use debruijn::kmer::{Kmer8, Kmer10, Kmer12};

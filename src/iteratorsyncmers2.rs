@@ -1,4 +1,17 @@
-// much taken from rust-debruijn
+//! AVX2-accelerated syncmer-based superkmer iterator.
+//!
+//! Uses 2-bit packed storage and a precomputed syncmer score table for fast MSP.
+//! Supports l=8 and l=9. Mint is canonical by default; call `.non_canonical()`
+//! on the iterator to get forward-strand mint instead.
+//!
+//! ```
+//! let seq = b"AACTGCACTGCACTGCACTGCACACTGCACTGCACTGCACTGCAC";
+//! let (storage, iter) = rust_superkmers::iteratorsyncmers2::SuperkmersIterator::new(seq, 21, 8);
+//! for sk in iter { /* canonical mint */ }
+//!
+//! let (_, iter) = rust_superkmers::iteratorsyncmers2::SuperkmersIterator::new(seq, 21, 8);
+//! for sk in iter.non_canonical() { /* forward-strand mint */ }
+//! ```
 use crate::Superkmer;
 use lazy_static::lazy_static;
 

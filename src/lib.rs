@@ -35,6 +35,16 @@ lazy_static! {
     pub static ref CANONICAL_12: Vec<(u32, bool)> = generate_canonical_table::<12>();
 }
 
+/// A superkmer: a maximal run of consecutive k-mers sharing the same minimizer.
+///
+/// # Fields
+/// - `start` — position of the first base in the original sequence.
+/// - `mint` — 2-bit packed minimizer value (canonical by default, forward-strand if
+///   `.non_canonical()` is used). Encoding: A=0, C=1, G=2, T=3, MSB-first.
+/// - `size` — length of the superkmer in bases (≥ k).
+/// - `mpos` — relative position of the minimizer within the superkmer (0-based offset from `start`).
+/// - `rc` — `true` if the canonical minimizer is the reverse complement of the forward-strand l-mer
+///   at position `start + mpos`. Always `false` when using `.non_canonical()`.
 #[derive(PartialEq, Eq, Hash, Debug)]
 pub struct Superkmer {
     pub start: usize,
@@ -79,31 +89,21 @@ impl Ord for SuperkmerVerbose {
 
 
 
-// An iterator for getting superkmers out of a DNA sequence
+/// Example: extract superkmers with the syncmers2 iterator.
 ///
-/// Parameters:
-///     * l: minimizer length
-///     * k: k-mer length
-///
-/// Hashing is performed by NtHash
-///
-/// Example usage:
 /// ```
-///     use debruijn::dna_string::DnaString; 
-///     fn main() {
-///        let seq = b"AACTGCACTGCACTGCACTGCACACTGCACTGCACTGCACTGCACACTGCACTGCACTGACTGCACTGCACTGCACTGCACTGCCTGC";
-///        let iter = rust_superkmers::iterator1::SuperkmersIterator::new(seq, 10, 5);
-///        for superkmer in iter
-///        {
-///            println!("superkmer: {:?}",superkmer);
-///        }
-///        let dnastring = DnaString::from_acgt_bytes(seq).to_bytes();
-///        let iter = rust_superkmers::iteratormsp::SuperkmersIterator::new(&dnastring,21, 8);
-///        for superkmer in iter
-///        {
-///            println!("superkmer: {:?}",superkmer);
-///        }
-
-///     }
+/// let seq = b"AACTGCACTGCACTGCACTGCACACTGCACTGCACTGCACTGCACACTGCACTGCACTGACTGCACTGCACTGCACTGCACTGCCTGC";
+///
+/// // Canonical mint (default) — RC-equivalent l-mers share the same bucket
+/// let (_, iter) = rust_superkmers::iteratorsyncmers2::SuperkmersIterator::new(seq, 21, 8);
+/// for sk in iter {
+///     println!("start={} mint={} size={} mpos={} rc={}", sk.start, sk.mint, sk.size, sk.mpos, sk.rc);
+/// }
+///
+/// // Non-canonical — forward-strand mint, rc always false
+/// let (_, iter) = rust_superkmers::iteratorsyncmers2::SuperkmersIterator::new(seq, 21, 8);
+/// for sk in iter.non_canonical() {
+///     assert!(!sk.rc);
+/// }
 /// ```
 fn noop() {}
