@@ -8,6 +8,8 @@ use rust_superkmers::iteratorkmc2;
 use rust_superkmers::iteratormsp;
 #[cfg(feature = "simd-mini")]
 use rust_superkmers::iteratorsimdmini;
+#[cfg(feature = "multi-mini")]
+use rust_superkmers::iteratormultiminimizers;
 
 fn main() {
     let args: Vec<String> = env::args().collect();
@@ -15,7 +17,7 @@ fn main() {
         eprintln!("Usage: {} <genome.fa> [k] [l] [method]", args[0]);
         eprintln!("  k: kmer length (default 31)");
         eprintln!("  l: minimizer length (default 8)");
-        eprintln!("  method: 'syncmer' (default), 'kmc2', 'msp', or 'simdmini'");
+        eprintln!("  method: 'syncmer' (default), 'kmc2', 'msp', 'simdmini', or 'multimini[:N]' (N=nb_hash, default 2)");
         std::process::exit(1);
     }
 
@@ -24,60 +26,90 @@ fn main() {
     let l_arg: usize = args.get(3).and_then(|s| s.parse().ok()).unwrap_or(0); // 0 = auto
     let method = args.get(4).map(|s| s.as_str()).unwrap_or("syncmer");
 
-    if !["syncmer", "kmc2", "msp", "simdmini"].contains(&method) {
-        eprintln!("Unknown method: {}. Use 'syncmer', 'kmc2', 'msp', or 'simdmini'.", method);
+    let base_method = method.split(':').next().unwrap();
+    if !["syncmer", "kmc2", "msp", "simdmini", "multimini"].contains(&base_method) {
+        eprintln!("Unknown method: {}. Use 'syncmer', 'kmc2', 'msp', 'simdmini', or 'multimini[:N]'.", method);
         std::process::exit(1);
     }
 
-    // simdmini requires odd l; other methods use even l (8).
-    // If user didn't specify l (0=auto), pick the right default per method.
-    // If user specified l, force it odd/even as needed.
-    let l = if method == "simdmini" {
+    // Parse nb_hash for multimini (e.g. "multimini:4")
+    // If just "multimini" with no :N, run all variants (1, 2, 4)
+    let multimini_nb_hashes: Vec<usize> = if base_method == "multimini" {
+        match method.split(':').nth(1).and_then(|s| s.parse().ok()) {
+            Some(n) => vec![n],
+            None => vec![2, 4, 8],
+        }
+    } else { vec![0] };
+
+    // simdmini/multimini require odd l or even k-l; other methods use even l (8).
+    let l = if base_method == "simdmini" {
         if l_arg == 0 { 9 } else if l_arg % 2 == 0 { eprintln!("Note: simdmini requires odd l, using l={}", l_arg + 1); l_arg + 1 } else { l_arg }
+    } else if base_method == "multimini" {
+        if l_arg == 0 { 9 } else if (k - l_arg) % 2 != 0 { eprintln!("Note: multimini requires k-l even, using l={}", l_arg + 1); l_arg + 1 } else { l_arg }
     } else {
         if l_arg == 0 { 8 } else { l_arg }
     };
 
-    eprintln!("Reading {}  k={}  l={}  method={}", fasta_path, k, l, method);
+    // Read FASTA once
+    let sequences = read_fasta(fasta_path);
 
-    let mut bucket_counts: HashMap<u32, u64> = HashMap::new();
-    let mut total_kmers: u64 = 0;
-    let mut total_superkmers: u64 = 0;
-    let mut seq_count: u64 = 0;
+    for &nb_hash in &multimini_nb_hashes {
+        if base_method == "multimini" {
+            eprintln!("Running k={}  l={}  method=multimini  nb_hash={}", k, l, nb_hash);
+        } else {
+            eprintln!("Running k={}  l={}  method={}", k, l, method);
+        }
 
-    let file = fs::File::open(fasta_path).expect("Failed to open FASTA file");
+        let mut bucket_counts: HashMap<u32, u64> = HashMap::new();
+        let mut total_kmers: u64 = 0;
+        let mut total_superkmers: u64 = 0;
+
+        for (i, seq) in sequences.iter().enumerate() {
+            process_seq(seq, k, l, method, nb_hash, &mut bucket_counts, &mut total_kmers, &mut total_superkmers);
+            if (i + 1) % 10 == 0 {
+                eprintln!("  processed {} sequences, {} superkmers, {} kmers so far", i + 1, total_superkmers, total_kmers);
+            }
+        }
+
+        eprintln!("Done. {} sequences, {} superkmers, {} total kmers, {} distinct minimizers",
+            sequences.len(), total_superkmers, total_kmers, bucket_counts.len());
+
+        if base_method == "multimini" && multimini_nb_hashes.len() > 1 {
+            println!("--- multimini nb_hash={} ---", nb_hash);
+        }
+        print_stats(&bucket_counts, total_kmers, total_superkmers, l);
+        if base_method == "multimini" && multimini_nb_hashes.len() > 1 {
+            println!();
+        }
+    }
+}
+
+fn read_fasta(path: &str) -> Vec<Vec<u8>> {
+    eprintln!("Reading {}", path);
+    let file = fs::File::open(path).expect("Failed to open FASTA file");
     let reader = BufReader::new(file);
-
+    let mut sequences = Vec::new();
     let mut current_seq = Vec::<u8>::new();
-
     for line in reader.lines() {
         let line = line.expect("Failed to read line");
         if line.starts_with('>') {
             if !current_seq.is_empty() {
-                process_seq(&current_seq, k, l, method, &mut bucket_counts, &mut total_kmers, &mut total_superkmers);
-                seq_count += 1;
-                if seq_count % 10 == 0 {
-                    eprintln!("  processed {} sequences, {} superkmers, {} kmers so far", seq_count, total_superkmers, total_kmers);
-                }
-                current_seq.clear();
+                sequences.push(std::mem::take(&mut current_seq));
             }
         } else {
             current_seq.extend_from_slice(line.trim().as_bytes());
         }
     }
     if !current_seq.is_empty() {
-        process_seq(&current_seq, k, l, method, &mut bucket_counts, &mut total_kmers, &mut total_superkmers);
-        seq_count += 1;
+        sequences.push(current_seq);
     }
-
-    eprintln!("Done. {} sequences, {} superkmers, {} total kmers, {} distinct minimizers",
-        seq_count, total_superkmers, total_kmers, bucket_counts.len());
-
-    print_stats(&bucket_counts, total_kmers, total_superkmers, l);
+    eprintln!("Read {} sequences", sequences.len());
+    sequences
 }
 
-fn process_seq(seq: &[u8], k: usize, l: usize, method: &str, bucket_counts: &mut HashMap<u32, u64>, total_kmers: &mut u64, total_superkmers: &mut u64) {
-    match method {
+fn process_seq(seq: &[u8], k: usize, l: usize, method: &str, nb_hash: usize, bucket_counts: &mut HashMap<u32, u64>, total_kmers: &mut u64, total_superkmers: &mut u64) {
+    let base_method = method.split(':').next().unwrap();
+    match base_method {
         "syncmer" => {
             let iter = iteratorsyncmers2::SuperkmersIterator::new_with_n(seq, k, l);
             count_superkmers(iter, k, bucket_counts, total_kmers, total_superkmers);
@@ -93,6 +125,11 @@ fn process_seq(seq: &[u8], k: usize, l: usize, method: &str, bucket_counts: &mut
         #[cfg(feature = "simd-mini")]
         "simdmini" => {
             let iter = iteratorsimdmini::SuperkmersIterator::new_with_n(seq, k, l);
+            count_superkmers(iter, k, bucket_counts, total_kmers, total_superkmers);
+        }
+        #[cfg(feature = "multi-mini")]
+        "multimini" => {
+            let iter = iteratormultiminimizers::SuperkmersIterator::new_with_n(seq, k, l, nb_hash);
             count_superkmers(iter, k, bucket_counts, total_kmers, total_superkmers);
         }
         _ => unreachable!(),

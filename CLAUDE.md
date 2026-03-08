@@ -24,15 +24,15 @@ Follow standard Rust idioms and patterns from the official Rust style guide.
 
 Measured with `bucket_stats` binary on the full CHM13v2.0 T2T human genome (3.1B kmers).
 
-| Metric | Syncmer (l=8) | SIMD-mini (l=9) | KMC2 (l=8) | MSP (l=8) |
-|--------|--------------|-----------------|------------|-----------|
-| Distinct minimizers | 20,483 | 35,960 | 12,196 | 51,145 |
-| Superkmers | **140M** | 148M | 268M | 294M |
-| Max bucket | **16.6M** | 18.1M | 34.7M | 18.2M |
-| Median bucket | 79,750 | 54,013 | 23,201 | 57 |
-| Mean bucket | 152,189 | 86,683 | 255,600 | 60,950 |
-| Max/Mean | **109x** | 209x | 136x | 298x |
-| Max/Median | **208x** | 336x | 1,497x | 318,858x |
+| Metric | Syncmer (l=8) | SIMD-mini (l=9) | KMC2 (l=8) | MSP (l=8) | Multi-mini N=2 (l=9) | Multi-mini N=4 (l=9) | Multi-mini N=8 (l=9) |
+|--------|--------------|-----------------|------------|-----------|---------------------|---------------------|---------------------|
+| Distinct minimizers | 20,483 | 35,960 | 12,196 | 51,145 | 100,277 | 115,040 | 125,648 |
+| Superkmers | **140M** | 148M | 268M | 294M | 210M | 179M | 160M |
+| Max bucket | **16.6M** | 18.1M | 34.7M | 18.2M | 8.2M | **5.5M** | 7.4M |
+| Median bucket | 79,750 | 54,013 | 23,201 | 57 | 2,854 | 4,820 | 6,814 |
+| Mean bucket | 152,189 | 86,683 | 255,600 | 60,950 | 36,957 | 32,381 | 28,132 |
+| Max/Mean | **109x** | 209x | 136x | 298x | 221x | **171x** | 262x |
+| Max/Median | **208x** | 336x | 1,497x | 318,858x | 2,856x | 1,147x | 1,081x |
 
 - **Syncmers** (`iteratorsyncmers2`, l=8): best overall — fewest superkmers, most uniform buckets.
 - **SIMD-mini** (`iteratorsimdmini`, l=9): uses `simd-minimizers` crate for SIMD-accelerated
@@ -41,12 +41,18 @@ Measured with `bucket_stats` binary on the full CHM13v2.0 T2T human genome (3.1B
 - **KMC2** (`iteratorkmc2`, l=8): disqualification rules backfire on repeat-rich genomes;
   concentrates k-mers into `CAG*`/`CCA*` Alu-related signatures.
 - **MSP/lexicographic** (`iteratormsp`, l=8): most distinct minimizers but extreme skew.
+- **Multi-mini** (`iteratormultiminimizers`, l=9): uses `multiminimizers` crate (optional dep
+  behind `multi-mini` feature). Runs N independent minimizer schemes in parallel, picks the one
+  yielding the longest superkmer. N=4 gives the best max bucket (5.5M) and max/mean (171x), but
+  produces overlapping superkmers (not a strict tiling), so total k-mer count is inflated (~3.7B
+  vs 3.1B). Requires k-l even. Significantly slower than other methods for N>2.
 
 Top offenders per method:
 - Syncmer: AATGGAAT (16.6M), ATTCCATT (11.4M) — Alu-related RC pair
 - SIMD-mini: AATGGAATG (18.1M), AAAAAAAAA (9.6M) — Alu + homopolymer
 - KMC2: CCATTCCA (34.7M), CAGCCTGG (26.4M) — Alu consensus
 - MSP: AAAAAAAT (18.2M), AAAAAAAG (14.6M) — homopolymer-adjacent
+- Multi-mini N=4: TTAAAAAAA (5.5M), GGAGGCTGA (5.3M) — homopolymer + Alu
 
 ## SIMD-mini Iterator (`iteratorsimdmini`)
 
@@ -90,4 +96,4 @@ reads (150-300bp), not whole chromosomes.
   KMC2 disqualification is counterproductive on top of syncmers — it removes valid candidates
   without providing better alternatives.
 
-Run: `cargo +nightly run --release --bin bucket_stats <genome.fa> [k] [l] [syncmer|kmc2|msp|simdmini]`
+Run: `cargo +nightly run --release --bin bucket_stats <genome.fa> [k] [l] [syncmer|kmc2|msp|simdmini|multimini[:N]]`

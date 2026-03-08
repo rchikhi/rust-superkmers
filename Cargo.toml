@@ -10,6 +10,7 @@ license = "MIT/Apache-2.0"
 
 [features]
 simd-mini = ["simd-minimizers"]
+multi-mini = ["multiminimizers"]
 default = ["simd-mini"]
 
 [dependencies]
@@ -24,6 +25,7 @@ twox-hash = "*"
 #static_init = "*" # crashes on my large static arrays with SIGSEGV
 lazy_static = "*"
 simd-minimizers = { version = "2.3", optional = true }
+multiminimizers = { git = "https://github.com/lrobidou/multiminimizers", optional = true }
 
 [dev-dependencies]
 criterion = "0.5"

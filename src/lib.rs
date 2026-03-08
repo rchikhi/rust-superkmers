@@ -10,6 +10,8 @@ pub mod iteratorsyncmers2;
 pub mod iteratorkmc2;
 #[cfg(feature = "simd-mini")]
 pub mod iteratorsimdmini;
+#[cfg(feature = "multi-mini")]
+pub mod iteratormultiminimizers;
 pub mod naivesyncmers;
 use std::cmp::Ordering;
 use lazy_static::lazy_static;
