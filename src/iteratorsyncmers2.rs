@@ -3,15 +3,33 @@ use crate::Superkmer;
 use lazy_static::lazy_static;
 
 const S: usize = 2; //syncmer's s parameter
-const K8: usize = 8;
 
 lazy_static! {
-static ref SYNCMER_SCORES_8: Box<[usize; 1 << (2 * K8)]> = generate_syncmer_scores::<K8>();
+static ref SYNCMER_SCORES_8: Vec<usize> = generate_syncmer_scores::<8>();
+static ref SYNCMER_SCORES_9: Vec<usize> = generate_syncmer_scores::<9>();
+}
+
+fn syncmer_scores(l: usize) -> &'static [usize] {
+    match l {
+        8 => &SYNCMER_SCORES_8[..],
+        9 => &SYNCMER_SCORES_9[..],
+        _ => panic!("Unsupported l={} for syncmer scores", l),
+    }
+}
+
+fn canonical_table(l: usize) -> &'static [(u32, bool)] {
+    match l {
+        8 => &*crate::CANONICAL_8,
+        9 => &*crate::CANONICAL_9,
+        10 => &*crate::CANONICAL_10,
+        12 => &*crate::CANONICAL_12,
+        _ => panic!("Unsupported l={} for canonical lookup", l),
+    }
 }
 
 
-fn generate_syncmer_scores<const K: usize>() -> Box<[usize; 1 << (2 * K)]> {
-    let mut scores = Box::new([0usize; 1 << (2 * K)]);
+fn generate_syncmer_scores<const K: usize>() -> Vec<usize> {
+    let mut scores = vec![0usize; 1 << (2 * K)];
     for kmer_int in 0..(1 << (2 * K)) {
         let kmer_bytes = {
             let mut bytes = [0u8; K];
@@ -140,18 +158,21 @@ pub struct SuperkmersIterator {
     min_positions: Vec<(usize, usize, usize, usize)>, // (kmer_start, minimizer_pos, minimizer_kmer, fragment_end)
     p: usize,
     k: usize,
+    l: usize,
 }
 
 impl SuperkmersIterator {
     /// Process a sequence assumed to contain no N characters.
     pub fn new(seq_str: &[u8], k: usize, l: usize) -> (Vec<u64>, Self) {
         let storage = bitpack_fragment(seq_str);
-        let min_positions = msp_minimizer_positions(&storage, seq_str.len(), k, l, 0, &SYNCMER_SCORES_8[..]);
+        let scores = syncmer_scores(l);
+        let min_positions = msp_minimizer_positions(&storage, seq_str.len(), k, l, 0, scores);
 
         (storage, SuperkmersIterator {
             min_positions,
             p: 0,
             k,
+            l,
         })
     }
 
@@ -160,12 +181,13 @@ impl SuperkmersIterator {
     pub fn new_with_n(seq_str: &[u8], k: usize, l: usize) -> (Vec<u64>, Self) {
         let fragments = crate::utils::split_on_n(seq_str, k);
         let full_storage = bitpack_fragment(seq_str);
+        let scores = syncmer_scores(l);
 
         let mut all_min_positions: Vec<(usize, usize, usize, usize)> = Vec::new();
 
         for (offset, fragment) in &fragments {
             let frag_storage = bitpack_fragment(fragment);
-            let positions = msp_minimizer_positions(&frag_storage, fragment.len(), k, l, *offset, &SYNCMER_SCORES_8[..]);
+            let positions = msp_minimizer_positions(&frag_storage, fragment.len(), k, l, *offset, scores);
             all_min_positions.extend(positions);
         }
 
@@ -173,6 +195,7 @@ impl SuperkmersIterator {
             min_positions: all_min_positions,
             p: 0,
             k,
+            l,
         })
     }
 }
@@ -202,12 +225,13 @@ impl Iterator for SuperkmersIterator {
 
         self.p += 1;
 
+        let (canonical, is_rc) = canonical_table(self.l)[min_kmer];
         Some(Superkmer {
             start: start_pos,
-            mint: min_kmer as u32,
+            mint: canonical,
             size: size as u8,
             mpos: (min_abs_pos - start_pos) as u8,
-            rc: false,
+            rc: is_rc,
         })
     }
 }

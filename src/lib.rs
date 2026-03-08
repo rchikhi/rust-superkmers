@@ -12,6 +12,28 @@ pub mod iteratorkmc2;
 pub mod iteratorsimdmini;
 pub mod naivesyncmers;
 use std::cmp::Ordering;
+use lazy_static::lazy_static;
+
+pub fn generate_canonical_table<const K: usize>() -> Vec<(u32, bool)> {
+    let mut table = vec![(0u32, false); 1 << (2 * K)];
+    for fwd in 0..(1 << (2 * K)) {
+        let mut rc = 0usize;
+        let mut v = fwd;
+        for _ in 0..K {
+            rc = (rc << 2) | (3 - (v & 3));
+            v >>= 2;
+        }
+        table[fwd] = if rc < fwd { (rc as u32, true) } else { (fwd as u32, false) };
+    }
+    table
+}
+
+lazy_static! {
+    pub static ref CANONICAL_8: Vec<(u32, bool)> = generate_canonical_table::<8>();
+    pub static ref CANONICAL_9: Vec<(u32, bool)> = generate_canonical_table::<9>();
+    pub static ref CANONICAL_10: Vec<(u32, bool)> = generate_canonical_table::<10>();
+    pub static ref CANONICAL_12: Vec<(u32, bool)> = generate_canonical_table::<12>();
+}
 
 #[derive(PartialEq, Eq, Hash, Debug)]
 pub struct Superkmer {

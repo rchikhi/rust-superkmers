@@ -21,8 +21,7 @@ const ASCII_TO_2BIT: [u8; 256] = {
     table
 };
 
-/// Compute canonical l-mer index from ASCII bytes at given position.
-/// Returns (canonical_index, is_rc) where is_rc means the RC was smaller.
+/// Encode forward l-mer from ASCII bytes and look up canonical form in table.
 #[inline]
 fn canonical_lmer_index(ascii: &[u8], pos: usize, l: usize) -> (usize, bool) {
     let mut fwd = 0usize;
@@ -30,12 +29,15 @@ fn canonical_lmer_index(ascii: &[u8], pos: usize, l: usize) -> (usize, bool) {
         let base = ASCII_TO_2BIT[ascii[pos + i] as usize] as usize;
         fwd = (fwd << 2) | base;
     }
-    let mut rc = 0usize;
-    for i in (0..l).rev() {
-        let base = ASCII_TO_2BIT[ascii[pos + i] as usize] as usize;
-        rc = (rc << 2) | (3 - base);
-    }
-    (fwd.min(rc), rc < fwd)
+    let canonical_table = match l {
+        8 => &*crate::CANONICAL_8,
+        9 => &*crate::CANONICAL_9,
+        10 => &*crate::CANONICAL_10,
+        12 => &*crate::CANONICAL_12,
+        _ => panic!("Unsupported l={} for canonical lookup", l),
+    };
+    let (canonical, is_rc) = canonical_table[fwd];
+    (canonical as usize, is_rc)
 }
 
 /// Collect superkmers from a single N-free fragment using SIMD syncmer detection.

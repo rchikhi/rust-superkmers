@@ -29,6 +29,22 @@ fn encode_lmer(seq: &[u8], pos: usize, l: usize) -> usize {
     v
 }
 
+fn rc_lmer(val: usize, l: usize) -> usize {
+    let mut rc = 0usize;
+    let mut v = val;
+    for _ in 0..l {
+        rc = (rc << 2) | (3 - (v & 3));
+        v >>= 2;
+    }
+    rc
+}
+
+fn canonical_lmer(seq: &[u8], pos: usize, l: usize) -> (usize, bool) {
+    let fwd = encode_lmer(seq, pos, l);
+    let rc = rc_lmer(fwd, l);
+    if rc < fwd { (rc, true) } else { (fwd, false) }
+}
+
 /// Read a single-sequence FASTA file and return the sequence (second line).
 fn read_fasta_seq(path: &str) -> Vec<u8> {
     fs::read_to_string(path)
@@ -308,7 +324,7 @@ fn test_n_at_edges() {
 // ---- iteratorsyncmers2 naive correctness tests ----
 
 mod syncmers2_correctness {
-    use super::{encode_lmer, random_dna, read_fasta_seq};
+    use super::{encode_lmer, random_dna, read_fasta_seq, canonical_lmer};
     use rust_superkmers::Superkmer;
 
     const S: usize = 2; // syncmer s parameter
@@ -417,7 +433,7 @@ mod syncmers2_correctness {
             };
             let size = end - start_pos;
             let mpos = mpos_abs - start_pos;
-            let mint = encode_lmer(seq, mpos_abs, l);
+            let (mint, _) = canonical_lmer(seq, mpos_abs, l);
             result.push((start_pos, size, mpos, mint));
         }
 
@@ -499,26 +515,10 @@ mod syncmers2_correctness {
 
 #[cfg(feature = "simd-mini")]
 mod simdmini {
-    use super::{encode_lmer, random_dna};
+    use super::{random_dna, canonical_lmer};
     use rust_superkmers::utils::split_on_n;
     use simd_minimizers::packed_seq::AsciiSeq;
     use std::collections::HashSet;
-
-    fn rc_lmer(val: usize, l: usize) -> usize {
-        let mut rc = 0usize;
-        let mut v = val;
-        for _ in 0..l {
-            rc = (rc << 2) | (3 - (v & 3));
-            v >>= 2;
-        }
-        rc
-    }
-
-    fn canonical_lmer(seq: &[u8], pos: usize, l: usize) -> (usize, bool) {
-        let fwd = encode_lmer(seq, pos, l);
-        let rc = rc_lmer(fwd, l);
-        (fwd.min(rc), rc < fwd)
-    }
 
     /// Compute canonical l-mer using string-based reverse complement (independent of 2-bit encoding).
     fn canonical_lmer_string(seq: &[u8], pos: usize, l: usize) -> (usize, bool) {

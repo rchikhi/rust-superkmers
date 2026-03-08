@@ -30,14 +30,14 @@ const K10: usize = 10;
 const K12: usize = 12;
 
 lazy_static! {
-    static ref SYNCMERS_8: Box<[bool; 1 << (2 * K8)]> = generate_syncmers::<K8>();
-    static ref SYNCMERS_10: Box<[bool; 1 << (2 * K10)]> = generate_syncmers::<K10>();
-    static ref SYNCMERS_12: Box<[bool; 1 << (2 * K12)]> = generate_syncmers::<K12>();
+    static ref SYNCMERS_8: Vec<bool> = generate_syncmers::<K8>();
+    static ref SYNCMERS_10: Vec<bool> = generate_syncmers::<K10>();
+    static ref SYNCMERS_12: Vec<bool> = generate_syncmers::<K12>();
 }
 
 
-fn generate_syncmers<const K: usize>() -> Box<[bool; 1 << (2 * K)]> {
-    let mut syncmers_arr = Box::new([false; 1 << (2 * K)]);
+fn generate_syncmers<const K: usize>() -> Vec<bool> {
+    let mut syncmers_arr = vec![false; 1 << (2 * K)];
     for kmer_int in 0..(1 << (2 * K)) {
         let kmer_bytes = {
             let mut bytes = [0u8; K];
@@ -73,64 +73,43 @@ fn score12(p: &Kmer12) -> usize {
     !SYNCMERS_12[kmer] as usize
 }
 
- 
-/* // Unclear if I can do this: is there an arbitrary-k Kmer type in rust-debruijn?
-fn score(p: &Kmer) -> usize {
-    let kmer = p.to_u64() as usize;
-    let syncmer = crate::syncmers::find_syncmers(K as usize, S, &[0, K - S], None, &kmer);
-    !syncmer.is_empty()
-}*/
-
-/* wrapper around rust-debruijn msp funtions
-  */
+/* wrapper around rust-debruijn msp functions */
 impl<'a> SuperkmersIterator<'a> {
     pub fn new(dnastring: &'a [u8], k: usize, l: usize) -> Self {
         let dnastring = &DnaString::from_bytes(dnastring);
-		let superkmer_iter: Box<dyn Iterator<Item = Superkmer>> = match l {
-			8 => {
-				let scanner8 = Scanner::new(dnastring, score8, k);
-				let msps = scanner8.scan();
-				
-				Box::new(msps.into_iter().map(|msp| Superkmer {
-					start: msp.start as usize,
-					mint: msp.minimizer.to_u64() as u32,
-					size: msp.len as u8,
-					mpos: (msp.minimizer_pos - msp.start) as u8,
-					rc: false,
-				}))
-			}
-			10 => {
-				let scanner10 = Scanner::new(dnastring, score10, k);
-				Box::new(scanner10.scan().into_iter().map(|msp| Superkmer {
-					start: msp.start as usize,
-					mint: msp.minimizer.to_u64() as u32,
-					size: msp.len as u8,
-					mpos: (msp.minimizer_pos - msp.start) as u8,
-                    rc: false,
+        let superkmer_iter: Box<dyn Iterator<Item = Superkmer>> = match l {
+            8 => {
+                let scanner8 = Scanner::new(dnastring, score8, k);
+                let msps = scanner8.scan();
+                Box::new(msps.into_iter().map(|msp| {
+                    let (canonical, is_rc) = crate::CANONICAL_8[msp.minimizer.to_u64() as usize];
+                    Superkmer {
+                        start: msp.start as usize, mint: canonical,
+                        size: msp.len as u8, mpos: (msp.minimizer_pos - msp.start) as u8, rc: is_rc,
+                    }
+                }))
+            }
+            10 => {
+                let scanner10 = Scanner::new(dnastring, score10, k);
+                Box::new(scanner10.scan().into_iter().map(|msp| {
+                    let (canonical, is_rc) = crate::CANONICAL_10[msp.minimizer.to_u64() as usize];
+                    Superkmer {
+                        start: msp.start as usize, mint: canonical,
+                        size: msp.len as u8, mpos: (msp.minimizer_pos - msp.start) as u8, rc: is_rc,
+                    }
                 }))
             }
             12 => {
                 let scanner12 = Scanner::new(dnastring, score12, k);
-                Box::new(scanner12.scan().into_iter().map(|msp| Superkmer {
-                    start: msp.start as usize,
-                    mint: msp.minimizer.to_u64() as u32,
-                    size: msp.len as u8,
-                    mpos: (msp.minimizer_pos - msp.start) as u8,
-                    rc: false,
+                Box::new(scanner12.scan().into_iter().map(|msp| {
+                    let (canonical, is_rc) = crate::CANONICAL_12[msp.minimizer.to_u64() as usize];
+                    Superkmer {
+                        start: msp.start as usize, mint: canonical,
+                        size: msp.len as u8, mpos: (msp.minimizer_pos - msp.start) as u8, rc: is_rc,
+                    }
                 }))
             }
             _ => panic!("Unsupported l size for MSP iteration"),
-            /* // possible to do this? unclear due to Kmer type
-            _ => {
-                let scanner = Scanner::new(dnastring, score, k);
-                Box::new(scanner.scan().into_iter().map(|msp| Superkmer {
-                    start: msp.start as usize,
-                    mint: msp.minimizer.to_u64() as u32,
-                    size: msp.len as u8,
-                    mpos: (msp.minimizer_pos - msp.start) as u8,
-                    rc: false,
-                }))
-            }*/
         };
         SuperkmersIterator { iter: superkmer_iter }
     }
@@ -143,4 +122,3 @@ impl<'a> Iterator for SuperkmersIterator<'a> {
         self.iter.next()
     }
 }
-
