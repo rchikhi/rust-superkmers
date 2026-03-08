@@ -1,40 +1,77 @@
 use std::fs;
 use debruijn::dna_string::DnaString;
-use rand::Rng;
 use rust_superkmers::Superkmer;
 use rust_superkmers::utils::split_on_n;
 
-fn random_dna(len: usize) -> String {
+fn random_dna(len: usize, seed: u64) -> Vec<u8> {
     let bases = [b'A', b'C', b'G', b'T'];
-    let mut rng = rand::rng();
-    (0..len).map(|_| bases[rng.random_range(0..4)] as char).collect()
+    let mut x = seed;
+    (0..len).map(|_| {
+        x = x.wrapping_mul(6364136223846793005).wrapping_add(1);
+        bases[((x >> 33) % 4) as usize]
+    }).collect()
+}
+
+/// Encode l-mer at position `pos` in `seq` to a 2-bit integer.
+/// Uses debruijn convention: A=0, C=1, G=2, T=3, MSB-first.
+fn encode_lmer(seq: &[u8], pos: usize, l: usize) -> usize {
+    let mut v = 0usize;
+    for i in 0..l {
+        let base = match seq[pos + i] {
+            b'A' | b'a' => 0,
+            b'C' | b'c' => 1,
+            b'G' | b'g' => 2,
+            b'T' | b't' => 3,
+            _ => 0,
+        };
+        v = (v << 2) | base;
+    }
+    v
+}
+
+/// Read a single-sequence FASTA file and return the sequence (second line).
+fn read_fasta_seq(path: &str) -> Vec<u8> {
+    fs::read_to_string(path)
+        .expect("Failed to read test genome file")
+        .split("\n").collect::<Vec<&str>>()[1]
+        .as_bytes().to_vec()
+}
+
+/// Collect superkmers from iteratorsyncmers2 and assert they tile the sequence.
+fn assert_syncmers2_tiling(seq: &[u8], k: usize, l: usize) {
+    let (_, iter) = rust_superkmers::iteratorsyncmers2::SuperkmersIterator::new(seq, k, l);
+    let superkmers: Vec<Superkmer> = iter.collect();
+    assert_tiling(&superkmers, seq.len(), k);
+}
+
+/// Assert two superkmer slices have identical fields, with an optional position offset
+/// applied to the `expected` side (for comparing N-split results).
+fn assert_superkmers_eq(actual: &[Superkmer], expected: &[Superkmer], offset: usize) {
+    assert_eq!(actual.len(), expected.len(), "superkmer count mismatch");
+    for (i, (a, b)) in actual.iter().zip(expected.iter()).enumerate() {
+        assert_eq!(a.start, b.start + offset,
+            "start differs at superkmer {}", i);
+        assert_eq!(a.size, b.size,
+            "size differs at superkmer {}", i);
+        assert_eq!(a.mint, b.mint,
+            "mint differs at superkmer {}", i);
+        assert_eq!(a.mpos, b.mpos,
+            "mpos differs at superkmer {}", i);
+    }
 }
 
 /// Compare iteratorsyncmers2 vs iteratorsyncmersmsp on a given sequence,
 /// asserting that all fields match exactly.
-fn assert_implementations_match(seq: &str, k: usize, l: usize) {
-    let dnastring = DnaString::from_dna_string(seq).to_bytes();
+fn assert_implementations_match(seq: &[u8], k: usize, l: usize) {
+    let seq_str = std::str::from_utf8(seq).unwrap();
+    let dnastring = DnaString::from_dna_string(seq_str).to_bytes();
     let iter_msp = rust_superkmers::iteratorsyncmersmsp::SuperkmersIterator::new(&dnastring, k, l);
     let msp: Vec<Superkmer> = iter_msp.collect();
 
-    let (_, iter2) = rust_superkmers::iteratorsyncmers2::SuperkmersIterator::new(seq.as_bytes(), k, l);
+    let (_, iter2) = rust_superkmers::iteratorsyncmers2::SuperkmersIterator::new(seq, k, l);
     let avx2: Vec<Superkmer> = iter2.collect();
 
-    assert_eq!(msp.len(), avx2.len(),
-        "Count mismatch for len={}, k={}, l={}: msp={}, avx2={}",
-        seq.len(), k, l, msp.len(), avx2.len());
-
-    for (i, (a, b)) in msp.iter().zip(avx2.iter()).enumerate() {
-        assert_eq!(a.start, b.start,
-            "start differs at superkmer {} for len={}, k={}, l={}", i, seq.len(), k, l);
-        assert_eq!(a.size, b.size,
-            "size differs at superkmer {} for len={}, k={}, l={}", i, seq.len(), k, l);
-        assert_eq!(a.mint, b.mint,
-            "mint differs at superkmer {} for len={}, k={}, l={}: msp={:#x}, avx2={:#x}",
-            i, seq.len(), k, l, a.mint, b.mint);
-        assert_eq!(a.mpos, b.mpos,
-            "mpos differs at superkmer {} for len={}, k={}, l={}", i, seq.len(), k, l);
-    }
+    assert_superkmers_eq(&msp, &avx2, 0);
 }
 
 /// Verify that superkmers tile the sequence: every k-mer is covered exactly once.
@@ -62,47 +99,32 @@ fn assert_tiling(superkmers: &[Superkmer], seq_len: usize, k: usize) {
 
 #[test]
 fn test_compare_ecoli_220() {
-    let contents = fs::read_to_string("tests/ecoli.genome.220.fa")
-        .expect("Failed to read test genome file")
-        .split("\n").collect::<Vec<&str>>()[1].to_string();
-
+    let seq = read_fasta_seq("tests/ecoli.genome.220.fa");
     for k in [17, 21, 31, 41] {
-        assert_implementations_match(&contents, k, 8);
+        assert_implementations_match(&seq, k, 8);
     }
 }
 
 #[test]
 fn test_compare_ecoli_76() {
-    let contents = fs::read_to_string("tests/ecoli.genome.76.fa")
-        .expect("Failed to read test genome file")
-        .split("\n").collect::<Vec<&str>>()[1].to_string();
-
+    let seq = read_fasta_seq("tests/ecoli.genome.76.fa");
     for k in [17, 21, 31] {
-        assert_implementations_match(&contents, k, 8);
+        assert_implementations_match(&seq, k, 8);
     }
 }
 
 #[test]
 fn test_compare_ecoli_100k() {
-    let contents = fs::read_to_string("tests/ecoli.genome.100k.fa")
-        .expect("Failed to read test genome file")
-        .split("\n").collect::<Vec<&str>>()[1].to_string();
-
-    assert_implementations_match(&contents, 21, 8);
-    assert_implementations_match(&contents, 31, 8);
+    let seq = read_fasta_seq("tests/ecoli.genome.100k.fa");
+    assert_implementations_match(&seq, 21, 8);
+    assert_implementations_match(&seq, 31, 8);
 }
 
 #[test]
 fn test_tiling_ecoli_220() {
-    let contents = fs::read_to_string("tests/ecoli.genome.220.fa")
-        .expect("Failed to read test genome file")
-        .split("\n").collect::<Vec<&str>>()[1].to_string();
-
+    let seq = read_fasta_seq("tests/ecoli.genome.220.fa");
     for k in [17, 21, 31] {
-        let (_, iter) = rust_superkmers::iteratorsyncmers2::SuperkmersIterator::new(
-            contents.as_bytes(), k, 8);
-        let superkmers: Vec<Superkmer> = iter.collect();
-        assert_tiling(&superkmers, contents.len(), k);
+        assert_syncmers2_tiling(&seq, k, 8);
     }
 }
 
@@ -113,8 +135,8 @@ fn test_random_sequences_various_lengths() {
         // Test lengths near k, around word boundary (32), and longer
         for len in [k, k + 1, k + 5, 32, 33, 50, 63, 64, 65, 100, 128, 150, 200, 300, 500] {
             if len < k { continue; }
-            for _ in 0..10 {
-                let seq = random_dna(len);
+            for i in 0..10 {
+                let seq = random_dna(len, (k * 1000 + len * 10 + i) as u64);
                 assert_implementations_match(&seq, k, l);
             }
         }
@@ -124,14 +146,10 @@ fn test_random_sequences_various_lengths() {
 #[test]
 fn test_random_sequences_tiling() {
     for k in [17, 21, 31] {
-        let l = 8;
         for len in [k + 5, 64, 150, 300] {
-            for _ in 0..20 {
-                let seq = random_dna(len);
-                let (_, iter) = rust_superkmers::iteratorsyncmers2::SuperkmersIterator::new(
-                    seq.as_bytes(), k, l);
-                let superkmers: Vec<Superkmer> = iter.collect();
-                assert_tiling(&superkmers, len, k);
+            for i in 0..20 {
+                let seq = random_dna(len, (k * 1000 + len * 100 + i) as u64);
+                assert_syncmers2_tiling(&seq, k, 8);
             }
         }
     }
@@ -139,13 +157,12 @@ fn test_random_sequences_tiling() {
 
 #[test]
 fn test_edge_case_exact_k_length() {
-    let l = 8;
     for k in [17, 21, 31] {
-        let seq = random_dna(k);
-        assert_implementations_match(&seq, k, l);
+        let seq = random_dna(k, k as u64 * 7 + 13);
+        assert_implementations_match(&seq, k, 8);
 
         let (_, iter) = rust_superkmers::iteratorsyncmers2::SuperkmersIterator::new(
-            seq.as_bytes(), k, l);
+            &seq, k, 8);
         let superkmers: Vec<Superkmer> = iter.collect();
         assert_eq!(superkmers.len(), 1,
             "sequence of exactly k={} should produce exactly 1 superkmer", k);
@@ -158,8 +175,8 @@ fn test_edge_case_exact_k_length() {
 fn test_homopolymer_sequences() {
     let l = 8;
     for k in [17, 21] {
-        for base in ['A', 'C', 'G', 'T'] {
-            let seq: String = std::iter::repeat(base).take(100).collect();
+        for &base in &[b'A', b'C', b'G', b'T'] {
+            let seq: Vec<u8> = std::iter::repeat(base).take(100).collect();
             assert_implementations_match(&seq, k, l);
         }
     }
@@ -169,8 +186,8 @@ fn test_homopolymer_sequences() {
 fn test_dinucleotide_repeats() {
     let l = 8;
     for k in [17, 21] {
-        for pattern in ["AC", "GT", "AG", "CT"] {
-            let seq: String = pattern.chars().cycle().take(150).collect();
+        for pattern in [b"AC", b"GT", b"AG", b"CT"] {
+            let seq: Vec<u8> = pattern.iter().cycle().take(150).cloned().collect();
             assert_implementations_match(&seq, k, l);
         }
     }
@@ -183,8 +200,8 @@ fn test_word_boundary_crossing() {
     let k = 21;
     // Lengths 25..=40 force l-mers to cross the boundary at position 32
     for len in 50..=70 {
-        for _ in 0..10 {
-            let seq = random_dna(len);
+        for i in 0..10 {
+            let seq = random_dna(len, (len * 100 + i) as u64);
             assert_implementations_match(&seq, k, l);
         }
     }
@@ -192,16 +209,11 @@ fn test_word_boundary_crossing() {
 
 #[test]
 fn test_long_random_sequences() {
-    let l = 8;
     for k in [21, 31] {
         for len in [1000, 5000, 10000] {
-            let seq = random_dna(len);
-            assert_implementations_match(&seq, k, l);
-
-            let (_, iter) = rust_superkmers::iteratorsyncmers2::SuperkmersIterator::new(
-                seq.as_bytes(), k, l);
-            let superkmers: Vec<Superkmer> = iter.collect();
-            assert_tiling(&superkmers, len, k);
+            let seq = random_dna(len, (k * 10000 + len) as u64);
+            assert_implementations_match(&seq, k, 8);
+            assert_syncmers2_tiling(&seq, k, 8);
         }
     }
 }
@@ -231,72 +243,502 @@ fn test_n_splitting_iteratorsyncmers2() {
     let l = 8;
 
     // Build a sequence with N's in the middle
-    let left = random_dna(50);
-    let right = random_dna(50);
-    let seq_with_n = format!("{}NNNNN{}", left, right);
+    let left = random_dna(50, 42);
+    let right = random_dna(50, 137);
+    let mut seq_with_n = Vec::new();
+    seq_with_n.extend_from_slice(&left);
+    seq_with_n.extend_from_slice(b"NNNNN");
+    seq_with_n.extend_from_slice(&right);
 
     // new_with_n on the combined sequence
     let (_, iter) = rust_superkmers::iteratorsyncmers2::SuperkmersIterator::new_with_n(
-        seq_with_n.as_bytes(), k, l);
+        &seq_with_n, k, l);
     let superkmers_split: Vec<Superkmer> = iter.collect();
 
     // Process each fragment independently with new (no N)
     let (_, iter_left) = rust_superkmers::iteratorsyncmers2::SuperkmersIterator::new(
-        left.as_bytes(), k, l);
+        &left, k, l);
     let left_sks: Vec<Superkmer> = iter_left.collect();
 
     let (_, iter_right) = rust_superkmers::iteratorsyncmers2::SuperkmersIterator::new(
-        right.as_bytes(), k, l);
+        &right, k, l);
     let right_sks: Vec<Superkmer> = iter_right.collect();
 
-    // Same number of superkmers
-    assert_eq!(superkmers_split.len(), left_sks.len() + right_sks.len(),
-        "N-split should produce same superkmers as processing fragments independently");
-
     // Left fragment superkmers should match exactly
-    for (a, b) in superkmers_split.iter().zip(left_sks.iter()) {
-        assert_eq!(a.start, b.start);
-        assert_eq!(a.size, b.size);
-        assert_eq!(a.mint, b.mint);
-        assert_eq!(a.mpos, b.mpos);
-    }
+    assert_superkmers_eq(&superkmers_split[..left_sks.len()], &left_sks, 0);
 
     // Right fragment superkmers should match with offset
     let right_offset = left.len() + 5; // 5 N's
-    for (a, b) in superkmers_split[left_sks.len()..].iter().zip(right_sks.iter()) {
-        assert_eq!(a.start, b.start + right_offset);
-        assert_eq!(a.size, b.size);
-        assert_eq!(a.mint, b.mint);
-        assert_eq!(a.mpos, b.mpos);
-    }
+    assert_superkmers_eq(&superkmers_split[left_sks.len()..], &right_sks, right_offset);
 }
 
 #[test]
 fn test_n_at_edges() {
     let k = 21;
     let l = 8;
-    let dna = random_dna(60);
+    let dna = random_dna(60, 77);
 
     // N's at start
-    let seq = format!("NNN{}", dna);
+    let mut seq = b"NNN".to_vec();
+    seq.extend_from_slice(&dna);
     let (_, iter) = rust_superkmers::iteratorsyncmers2::SuperkmersIterator::new_with_n(
-        seq.as_bytes(), k, l);
+        &seq, k, l);
     let sks: Vec<Superkmer> = iter.collect();
     assert!(sks.iter().all(|sk| sk.start >= 3), "no superkmer should start before the N's");
 
     // N's at end
-    let seq = format!("{}NNN", dna);
+    let mut seq = dna.clone();
+    seq.extend_from_slice(b"NNN");
     let (_, iter) = rust_superkmers::iteratorsyncmers2::SuperkmersIterator::new_with_n(
-        seq.as_bytes(), k, l);
+        &seq, k, l);
     let sks: Vec<Superkmer> = iter.collect();
     assert!(sks.iter().all(|sk| (sk.start + sk.size as usize) <= dna.len()),
         "no superkmer should extend into trailing N's");
 
     // Fragment too short to produce k-mers
-    let seq = format!("ACGTNNNNN{}", dna);
+    let mut seq = b"ACGTNNNNN".to_vec();
+    seq.extend_from_slice(&dna);
     let (_, iter) = rust_superkmers::iteratorsyncmers2::SuperkmersIterator::new_with_n(
-        seq.as_bytes(), k, l);
+        &seq, k, l);
     let sks: Vec<Superkmer> = iter.collect();
     // "ACGT" is too short for k=21, should only get superkmers from the right fragment
     assert!(sks.iter().all(|sk| sk.start >= 9));
+}
+
+// ---- iteratorsyncmers2 naive correctness tests ----
+
+mod syncmers2_correctness {
+    use super::{encode_lmer, random_dna, read_fasta_seq};
+    use rust_superkmers::Superkmer;
+
+    const S: usize = 2; // syncmer s parameter
+
+    /// Naive: is a given l-mer (as bytes) a closed syncmer?
+    /// Closed syncmer: minimum s-mer (by lexicographic byte comparison, matching
+    /// syncmers.rs `find_syncmers_pos`) is at position 0 or l-s.
+    fn is_syncmer_naive(lmer: &[u8], l: usize, s: usize) -> bool {
+        let num_smers = l - s + 1;
+
+        // Find the position of the lexicographically smallest s-mer
+        // (matching .min_by(|(_, a), (_, b)| a.cmp(b)) in syncmers.rs)
+        let min_pos = (0..num_smers)
+            .min_by(|&i, &j| lmer[i..i + s].cmp(&lmer[j..j + s]))
+            .unwrap();
+
+        // Closed syncmer: min s-mer at position 0 or l-s
+        min_pos == 0 || min_pos == l - s
+    }
+
+    /// Build the syncmer score table naively for all 4^l l-mers.
+    /// Score 0 = syncmer (good), 1 = non-syncmer.
+    fn build_score_table(l: usize) -> Vec<usize> {
+        let num_lmers = 1 << (2 * l);
+        let mut scores = vec![0usize; num_lmers];
+        for val in 0..num_lmers {
+            // Decode to bytes
+            let mut lmer = vec![0u8; l];
+            for i in 0..l {
+                lmer[i] = match (val >> (2 * (l - 1 - i))) & 3 {
+                    0 => b'A',
+                    1 => b'C',
+                    2 => b'G',
+                    3 => b'T',
+                    _ => unreachable!(),
+                };
+            }
+            scores[val] = if is_syncmer_naive(&lmer, l, S) { 0 } else { 1 };
+        }
+        scores
+    }
+
+    /// Naive MSP following the exact algorithm from debruijn's Scanner::scan():
+    /// - Initialize: find best minimizer in first window (lowest score, rightmost on tie)
+    /// - Slide: only change minimizer when it falls off the left edge (rescan full window)
+    ///   or a strictly better (lower score) l-mer enters from the right
+    /// - Group consecutive k-mers sharing the same minimizer into superkmers
+    fn naive_superkmers(seq: &[u8], k: usize, l: usize) -> Vec<(usize, usize, usize, usize)> {
+        // Returns: (start, size, mpos_relative, mint)
+        let scores = build_score_table(l);
+        let num_kmers = seq.len() - k + 1;
+        let max_lmer_offset = k - l;
+
+        // Find best minimizer in a window [start, stop] (lowest score, rightmost on tie)
+        let find_min = |start: usize, stop: usize| -> (usize, usize) {
+            // Returns (score, position)
+            let mut best_score = usize::MAX;
+            let mut best_pos = start;
+            for pos in start..=stop {
+                let lmer_val = encode_lmer(seq, pos, l);
+                let score = scores[lmer_val];
+                // Lower score wins; on tie, higher pos wins (rightmost)
+                if score < best_score || (score == best_score && pos >= best_pos) {
+                    best_score = score;
+                    best_pos = pos;
+                }
+            }
+            (best_score, best_pos)
+        };
+
+        // Initialize with first k-mer window
+        let (mut min_score, mut min_pos) = find_min(0, max_lmer_offset);
+
+        // Track minimizer changes (kmer_index, minimizer_position)
+        let mut min_positions: Vec<(usize, usize)> = vec![(0, min_pos)];
+
+        for i in 1..num_kmers {
+            let end_lmer_pos = i + max_lmer_offset;
+            let end_val = encode_lmer(seq, end_lmer_pos, l);
+            let end_score = scores[end_val];
+
+            if i > min_pos {
+                // Current minimizer fell off left edge → rescan full window
+                let (new_score, new_pos) = find_min(i, i + max_lmer_offset);
+                min_score = new_score;
+                min_pos = new_pos;
+                min_positions.push((i, min_pos));
+            } else if end_score < min_score {
+                // Strictly better l-mer entered from the right
+                min_score = end_score;
+                min_pos = end_lmer_pos;
+                min_positions.push((i, min_pos));
+            }
+            // Otherwise: keep current minimizer (sticky)
+        }
+
+        // Convert minimizer change points into superkmers
+        let mut result = Vec::new();
+        for p in 0..min_positions.len() {
+            let (start_pos, mpos_abs) = min_positions[p];
+            let end = if p + 1 < min_positions.len() {
+                let (next_pos, _) = min_positions[p + 1];
+                next_pos + k - 1 // last k-mer of this superkmer ends at next_pos-1+k-1
+            } else {
+                seq.len()
+            };
+            let size = end - start_pos;
+            let mpos = mpos_abs - start_pos;
+            let mint = encode_lmer(seq, mpos_abs, l);
+            result.push((start_pos, size, mpos, mint));
+        }
+
+        result
+    }
+
+    fn check_correctness(seq: &[u8], k: usize, l: usize) {
+        let naive = naive_superkmers(seq, k, l);
+
+        let (_, iter) = rust_superkmers::iteratorsyncmers2::SuperkmersIterator::new(seq, k, l);
+        let actual: Vec<Superkmer> = iter.collect();
+
+        assert_eq!(naive.len(), actual.len(),
+            "superkmer count mismatch: naive={} actual={} (seq_len={}, k={}, l={})",
+            naive.len(), actual.len(), seq.len(), k, l);
+
+        for (i, ((n_start, n_size, n_mpos, n_mint), a)) in naive.iter().zip(actual.iter()).enumerate() {
+            assert_eq!(*n_start, a.start,
+                "superkmer {} start: naive={} actual={}", i, n_start, a.start);
+            assert_eq!(*n_size, a.size as usize,
+                "superkmer {} size: naive={} actual={}", i, n_size, a.size);
+            assert_eq!(*n_mpos, a.mpos as usize,
+                "superkmer {} mpos: naive={} actual={}", i, n_mpos, a.mpos);
+            assert_eq!(*n_mint, a.mint as usize,
+                "superkmer {} mint: naive={:#x} actual={:#x}", i, n_mint, a.mint);
+        }
+    }
+
+    #[test]
+    fn test_syncmers2_naive_short() {
+        let seq = b"AACTGCACTGCACTGCACTGCACACTGCACTGCACTGCACTGCACACTGCACTGCACTGACTGCACTGCACTGCACTGCACTGCCTGC";
+        check_correctness(seq, 21, 8);
+        check_correctness(seq, 31, 8);
+    }
+
+    #[test]
+    fn test_syncmers2_naive_random() {
+        for k in [17, 21, 31] {
+            for len in [k, k + 1, 50, 100, 300, 1000] {
+                if len < k { continue; }
+                for seed in 0..10 {
+                    check_correctness(&random_dna(len, seed * 137 + 42), k, 8);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn test_syncmers2_naive_homopolymer() {
+        for base in [b'A', b'C', b'G', b'T'] {
+            let seq: Vec<u8> = std::iter::repeat(base).take(100).collect();
+            check_correctness(&seq, 21, 8);
+        }
+    }
+
+    #[test]
+    fn test_syncmers2_naive_dinucleotide() {
+        for pattern in [b"AC", b"GT", b"AG", b"CT"] {
+            let seq: Vec<u8> = pattern.iter().cycle().take(200).cloned().collect();
+            check_correctness(&seq, 21, 8);
+            check_correctness(&seq, 31, 8);
+        }
+    }
+
+    #[test]
+    fn test_syncmers2_naive_large() {
+        check_correctness(&random_dna(100_000, 999), 31, 8);
+    }
+
+    #[test]
+    fn test_syncmers2_naive_ecoli() {
+        let seq = read_fasta_seq("tests/ecoli.genome.220.fa");
+        check_correctness(&seq, 21, 8);
+        check_correctness(&seq, 31, 8);
+    }
+}
+
+// ---- simdmini tests ----
+
+#[cfg(feature = "simd-mini")]
+mod simdmini {
+    use super::{encode_lmer, random_dna};
+    use rust_superkmers::utils::split_on_n;
+    use simd_minimizers::packed_seq::AsciiSeq;
+    use std::collections::HashSet;
+
+    fn rc_lmer(val: usize, l: usize) -> usize {
+        let mut rc = 0usize;
+        let mut v = val;
+        for _ in 0..l {
+            rc = (rc << 2) | (3 - (v & 3));
+            v >>= 2;
+        }
+        rc
+    }
+
+    fn canonical_lmer(seq: &[u8], pos: usize, l: usize) -> (usize, bool) {
+        let fwd = encode_lmer(seq, pos, l);
+        let rc = rc_lmer(fwd, l);
+        (fwd.min(rc), rc < fwd)
+    }
+
+    /// Compute canonical l-mer using string-based reverse complement (independent of 2-bit encoding).
+    fn canonical_lmer_string(seq: &[u8], pos: usize, l: usize) -> (usize, bool) {
+        let lmer = &seq[pos..pos + l];
+        // Build RC by reversing and complementing each base
+        let rc_bytes: Vec<u8> = lmer.iter().rev().map(|&b| match b {
+            b'A' | b'a' => b'T',
+            b'C' | b'c' => b'G',
+            b'G' | b'g' => b'C',
+            b'T' | b't' => b'A',
+            _ => b,
+        }).collect();
+        // Encode both as 2-bit integers
+        let encode = |s: &[u8]| -> usize {
+            let mut v = 0usize;
+            for &b in s {
+                let bits = match b {
+                    b'A' => 0, b'C' => 1, b'G' => 2, b'T' => 3,
+                    _ => 0,
+                };
+                v = (v << 2) | bits;
+            }
+            v
+        };
+        let fwd_upper: Vec<u8> = lmer.iter().map(|&b| b.to_ascii_uppercase()).collect();
+        let fwd_val = encode(&fwd_upper);
+        let rc_val = encode(&rc_bytes);
+        (fwd_val.min(rc_val), rc_val < fwd_val)
+    }
+
+    /// Get syncmer positions using the same simd-minimizers function as the iterator.
+    fn simd_syncmer_positions(seq: &[u8], l: usize) -> HashSet<usize> {
+        let s = 2usize;
+        let w = l - s + 1;
+        let upper: Vec<u8> = seq.iter().map(|&b| b.to_ascii_uppercase()).collect();
+        let mut pos_vec: Vec<u32> = Vec::new();
+        simd_minimizers::canonical_closed_syncmers(s, w)
+            .run(AsciiSeq(&upper), &mut pos_vec);
+        pos_vec.into_iter().map(|p| p as usize).collect()
+    }
+
+    /// Full correctness check:
+    /// 1. Tiling: total k-mers match, no gaps/overlaps
+    /// 2. Minimizer position is a syncmer (per simd-minimizers)
+    /// 3. mint matches canonical l-mer encoding at that position
+    /// 4. rc flag matches canonical orientation
+    /// 5. Minimizer is within every k-mer's window bounds
+    /// 6. mpos within bounds
+    fn check_correctness(seq: &[u8], k: usize, l: usize) {
+        let upper: Vec<u8> = seq.iter().map(|&b| b.to_ascii_uppercase()).collect();
+        let iter = rust_superkmers::iteratorsimdmini::SuperkmersIterator::new(seq, k, l);
+        let sks: Vec<_> = iter.collect();
+
+        // 1. Tiling
+        let total_kmers: usize = sks.iter().map(|s| s.size as usize - k + 1).sum();
+        let expected = seq.len() - k + 1;
+        assert_eq!(total_kmers, expected,
+            "k-mer coverage: got {} expected {} (seq_len={})", total_kmers, expected, seq.len());
+
+        for i in 1..sks.len() {
+            let prev_end = sks[i-1].start + sks[i-1].size as usize - k + 1;
+            assert_eq!(sks[i].start, prev_end,
+                "gap/overlap at superkmer {}", i);
+        }
+
+        // Build syncmer set using the same SIMD function as the iterator
+        let syncmer_set = simd_syncmer_positions(&upper, l);
+
+        for (si, sk) in sks.iter().enumerate() {
+            let mpos_abs = sk.start + sk.mpos as usize;
+
+            // 2. Minimizer is a syncmer
+            assert!(syncmer_set.contains(&mpos_abs),
+                "superkmer {} (start={}): minimizer at pos {} is NOT a syncmer",
+                si, sk.start, mpos_abs);
+
+            // 3. mint matches canonical l-mer
+            let (canon, is_rc) = canonical_lmer(&upper, mpos_abs, l);
+            assert_eq!(sk.mint as usize, canon,
+                "superkmer {} (start={}): mint={} but canonical at pos {} = {}",
+                si, sk.start, sk.mint, mpos_abs, canon);
+
+            // 4. rc flag
+            assert_eq!(sk.rc, is_rc,
+                "superkmer {} (start={}): rc={} but expected {}", si, sk.start, sk.rc, is_rc);
+
+            // 5. Minimizer is within every k-mer's window
+            let num_kmers = sk.size as usize - k + 1;
+            for j in 0..num_kmers {
+                let kmer_start = sk.start + j;
+                let window_end = kmer_start + k - l;
+                assert!(mpos_abs >= kmer_start && mpos_abs <= window_end,
+                    "superkmer {} kmer {} (pos={}): minimizer at {} outside window [{}, {}]",
+                    si, j, kmer_start, mpos_abs, kmer_start, window_end);
+            }
+
+            // 6. Boundary: at superkmer transitions, the previous minimizer
+            //    must have fallen off the left edge of the new first k-mer's window
+            if si > 0 {
+                let prev_mpos_abs = sks[si-1].start + sks[si-1].mpos as usize;
+                let first_kmer_start = sk.start;
+                assert!(prev_mpos_abs < first_kmer_start,
+                    "superkmer {}: previous minimizer at {} should have fallen off \
+                     (first kmer starts at {})",
+                    si, prev_mpos_abs, first_kmer_start);
+            }
+
+            // 7. mpos within bounds
+            assert!((sk.mpos as usize) + l <= sk.size as usize,
+                "superkmer {} mpos out of bounds", si);
+        }
+    }
+
+    #[test]
+    fn test_canonical_lmer_index_correctness() {
+        // Verify the 2-bit canonical_lmer matches the string-based implementation
+        // for every l-mer position across diverse sequences.
+        let seqs: Vec<Vec<u8>> = vec![
+            b"ACGTACGTACGTACGTACGTACGTACGTACGT".to_vec(),
+            b"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA".to_vec(),
+            b"TTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTT".to_vec(),
+            b"ATATATATATATATATATATATATATATATAT".to_vec(),
+            b"GCGCGCGCGCGCGCGCGCGCGCGCGCGCGCG".to_vec(),
+            b"AACTTGGCCAATGGTTCCAAGGTTAACCGGTT".to_vec(),
+            random_dna(1000, 42),
+            random_dna(1000, 123),
+            random_dna(1000, 999),
+        ];
+
+        for l in [3, 5, 7, 9, 11] {
+            for seq in &seqs {
+                if seq.len() < l { continue; }
+                for pos in 0..=seq.len() - l {
+                    let (val_2bit, rc_2bit) = canonical_lmer(seq, pos, l);
+                    let (val_str, rc_str) = canonical_lmer_string(seq, pos, l);
+                    assert_eq!(val_2bit, val_str,
+                        "mint mismatch at pos={} l={} lmer={:?}",
+                        pos, l, std::str::from_utf8(&seq[pos..pos+l]).unwrap_or("?"));
+                    assert_eq!(rc_2bit, rc_str,
+                        "rc mismatch at pos={} l={} lmer={:?}",
+                        pos, l, std::str::from_utf8(&seq[pos..pos+l]).unwrap_or("?"));
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn test_canonical_lmer_known_values() {
+        // Hand-verified cases
+        // ACG -> fwd=0b000110=6, rc=CGT=0b_01_10_11=27 -> canonical=6, rc=false
+        assert_eq!(canonical_lmer(b"ACG", 0, 3), (6, false));
+        assert_eq!(canonical_lmer_string(b"ACG", 0, 3), (6, false));
+
+        // AAA -> fwd=0, rc=TTT=0b111111=63 -> canonical=0, rc=false
+        assert_eq!(canonical_lmer(b"AAA", 0, 3), (0, false));
+
+        // TTT -> fwd=0b111111=63, rc=AAA=0 -> canonical=0, rc=true
+        assert_eq!(canonical_lmer(b"TTT", 0, 3), (0, true));
+
+        // Palindromic: ACGT -> fwd=0b00011011=27, rc=ACGT=27 -> canonical=27, rc=false (rc==fwd, not rc<fwd)
+        assert_eq!(canonical_lmer(b"ACGT", 0, 4), (27, false));
+        assert_eq!(canonical_lmer_string(b"ACGT", 0, 4), (27, false));
+    }
+
+    #[test]
+    fn test_simdmini_mint_rc_independent_verification() {
+        // Run simdmini iterator and verify every superkmer's mint/rc
+        // using the string-based canonical computation (fully independent of 2-bit encoding).
+        for seed in [42u64, 77, 123, 456, 789] {
+            let seq = random_dna(5000, seed);
+            let k = 31;
+            let l = 9;
+            let upper: Vec<u8> = seq.iter().map(|&b| b.to_ascii_uppercase()).collect();
+            let iter = rust_superkmers::iteratorsimdmini::SuperkmersIterator::new(&seq, k, l);
+            for (si, sk) in iter.enumerate() {
+                let mpos_abs = sk.start + sk.mpos as usize;
+                let (expected_mint, expected_rc) = canonical_lmer_string(&upper, mpos_abs, l);
+                assert_eq!(sk.mint as usize, expected_mint,
+                    "seed={} superkmer {}: mint mismatch at pos {}", seed, si, mpos_abs);
+                assert_eq!(sk.rc, expected_rc,
+                    "seed={} superkmer {}: rc mismatch at pos {}", seed, si, mpos_abs);
+            }
+        }
+    }
+
+    #[test]
+    fn test_simdmini_correctness_short() {
+        let seq = b"AACTGCACTGCACTGCACTGCACACTGCACTGCACTGCACTGCACACTGCACTGCACTGACTGCACTGCACTGCACTGCACTGCCTGCAACTGCACTGCACTGCACTGCACACTGCACTGCACTGCACTGCACACTGCACTGCACTGACTGCACTGCACTGCACTGCACTGCCTGC";
+        check_correctness(seq, 31, 9);
+    }
+
+    #[test]
+    fn test_simdmini_correctness_random_10k() {
+        check_correctness(&random_dna(10000, 42), 31, 9);
+    }
+
+    #[test]
+    fn test_simdmini_correctness_homopolymer() {
+        let mut seq = Vec::new();
+        seq.extend_from_slice(b"ACGTACGTACGTACGT");
+        for _ in 0..1000 { seq.push(b'A'); }
+        seq.extend_from_slice(b"ACGTACGTACGTACGT");
+        check_correctness(&seq, 31, 9);
+    }
+
+    #[test]
+    fn test_simdmini_correctness_random_100k() {
+        check_correctness(&random_dna(100_000, 99), 31, 9);
+    }
+
+    #[test]
+    fn test_simdmini_correctness_with_n() {
+        let mut seq = random_dna(500, 77);
+        seq[200] = b'N';
+        seq[201] = b'N';
+        let iter = rust_superkmers::iteratorsimdmini::SuperkmersIterator::new_with_n(&seq, 31, 9);
+        let sks: Vec<_> = iter.collect();
+        let total_kmers: usize = sks.iter().map(|s| s.size as usize - 31 + 1).sum();
+        let fragments = split_on_n(&seq, 31);
+        let expected: usize = fragments.iter().filter(|(_, f)| f.len() >= 31).map(|(_, f)| f.len() - 30).sum();
+        assert_eq!(total_kmers, expected, "N-split coverage mismatch");
+    }
 }

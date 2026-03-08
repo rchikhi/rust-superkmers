@@ -8,6 +8,10 @@ keywords = ["bioinformatics"]
 categories = ["science", "algorithms"]
 license = "MIT/Apache-2.0"
 
+[features]
+simd-mini = ["simd-minimizers"]
+default = ["simd-mini"]
+
 [dependencies]
 nthash = "0.5.1"
 nthash32 = { git = "https://github.com/rchikhi/rust-nthash32"  }
@@ -19,9 +23,11 @@ debruijn = "*"
 twox-hash = "*"
 #static_init = "*" # crashes on my large static arrays with SIGSEGV
 lazy_static = "*"
+simd-minimizers = { version = "2.3", optional = true }
 
 [dev-dependencies]
 criterion = "0.5"
+simd-minimizers = "2.3"
 
 [[bench]]
 name = "bench"

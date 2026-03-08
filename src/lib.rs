@@ -8,6 +8,8 @@ pub mod syncmers;
 pub mod iteratorsyncmersmsp;
 pub mod iteratorsyncmers2;
 pub mod iteratorkmc2;
+#[cfg(feature = "simd-mini")]
+pub mod iteratorsimdmini;
 pub mod naivesyncmers;
 use std::cmp::Ordering;
 

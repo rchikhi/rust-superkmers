@@ -6,6 +6,8 @@ use std::io::{BufRead, BufReader};
 use rust_superkmers::iteratorsyncmers2;
 use rust_superkmers::iteratorkmc2;
 use rust_superkmers::iteratormsp;
+#[cfg(feature = "simd-mini")]
+use rust_superkmers::iteratorsimdmini;
 
 fn main() {
     let args: Vec<String> = env::args().collect();
@@ -13,19 +15,28 @@ fn main() {
         eprintln!("Usage: {} <genome.fa> [k] [l] [method]", args[0]);
         eprintln!("  k: kmer length (default 31)");
         eprintln!("  l: minimizer length (default 8)");
-        eprintln!("  method: 'syncmer' (default), 'kmc2', or 'msp'");
+        eprintln!("  method: 'syncmer' (default), 'kmc2', 'msp', or 'simdmini'");
         std::process::exit(1);
     }
 
     let fasta_path = &args[1];
     let k: usize = args.get(2).and_then(|s| s.parse().ok()).unwrap_or(31);
-    let l: usize = args.get(3).and_then(|s| s.parse().ok()).unwrap_or(8);
+    let l_arg: usize = args.get(3).and_then(|s| s.parse().ok()).unwrap_or(0); // 0 = auto
     let method = args.get(4).map(|s| s.as_str()).unwrap_or("syncmer");
 
-    if !["syncmer", "kmc2", "msp"].contains(&method) {
-        eprintln!("Unknown method: {}. Use 'syncmer', 'kmc2', or 'msp'.", method);
+    if !["syncmer", "kmc2", "msp", "simdmini"].contains(&method) {
+        eprintln!("Unknown method: {}. Use 'syncmer', 'kmc2', 'msp', or 'simdmini'.", method);
         std::process::exit(1);
     }
+
+    // simdmini requires odd l; other methods use even l (8).
+    // If user didn't specify l (0=auto), pick the right default per method.
+    // If user specified l, force it odd/even as needed.
+    let l = if method == "simdmini" {
+        if l_arg == 0 { 9 } else if l_arg % 2 == 0 { eprintln!("Note: simdmini requires odd l, using l={}", l_arg + 1); l_arg + 1 } else { l_arg }
+    } else {
+        if l_arg == 0 { 8 } else { l_arg }
+    };
 
     eprintln!("Reading {}  k={}  l={}  method={}", fasta_path, k, l, method);
 
@@ -78,6 +89,11 @@ fn process_seq(seq: &[u8], k: usize, l: usize, method: &str, bucket_counts: &mut
         "msp" => {
             let superkmers = iteratormsp::superkmers_with_n(seq, k, l);
             count_superkmers(superkmers.into_iter(), k, bucket_counts, total_kmers, total_superkmers);
+        }
+        #[cfg(feature = "simd-mini")]
+        "simdmini" => {
+            let iter = iteratorsimdmini::SuperkmersIterator::new_with_n(seq, k, l);
+            count_superkmers(iter, k, bucket_counts, total_kmers, total_superkmers);
         }
         _ => unreachable!(),
     }

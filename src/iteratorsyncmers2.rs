@@ -6,11 +6,12 @@ const S: usize = 2; //syncmer's s parameter
 const K8: usize = 8;
 
 lazy_static! {
-static ref SYNCMERS_8: Box<[bool; 1 << (2 * K8)]> = generate_syncmers::<K8>();
+static ref SYNCMER_SCORES_8: Box<[usize; 1 << (2 * K8)]> = generate_syncmer_scores::<K8>();
 }
 
-fn generate_syncmers<const K: usize>() -> Box<[bool; 1 << (2 * K)]> {
-    let mut syncmers_arr = Box::new([false; 1 << (2 * K)]);
+
+fn generate_syncmer_scores<const K: usize>() -> Box<[usize; 1 << (2 * K)]> {
+    let mut scores = Box::new([0usize; 1 << (2 * K)]);
     for kmer_int in 0..(1 << (2 * K)) {
         let kmer_bytes = {
             let mut bytes = [0u8; K];
@@ -26,9 +27,9 @@ fn generate_syncmers<const K: usize>() -> Box<[bool; 1 << (2 * K)]> {
             bytes
         };
         let syncmer = crate::syncmers::find_syncmers(K as usize, S, &[0, K - S], None, &kmer_bytes);
-        syncmers_arr[kmer_int] = !syncmer.is_empty();
+        scores[kmer_int] = syncmer.is_empty() as usize;
     }
-    syncmers_arr
+    scores
 }
 
 use crate::utils::bitpack_fragment;
@@ -95,12 +96,11 @@ impl PartialOrd for MinPos {
 
 /// Run MSP sliding window on a single fragment, returning (kmer_start, minimizer_pos, minimizer_kmer, fragment_end).
 /// All positions are absolute (offset already added).
-fn msp_minimizer_positions(storage: &[u64], frag_len: usize, k: usize, l: usize, offset: usize) -> Vec<(usize, usize, usize, usize)> {
-    let score = |kmer_val: usize| -> usize { !SYNCMERS_8[kmer_val] as usize };
-
+/// `scores` maps each l-mer integer value to its score (lower = better minimizer).
+fn msp_minimizer_positions(storage: &[u64], frag_len: usize, k: usize, l: usize, offset: usize, scores: &[usize]) -> Vec<(usize, usize, usize, usize)> {
     let mp = |pos: usize| -> MinPos {
         let kmer = get_kmer_value(storage, pos, l);
-        let val = score(kmer);
+        let val = scores[kmer];
         MinPos { val, pos, kmer }
     };
 
@@ -146,7 +146,7 @@ impl SuperkmersIterator {
     /// Process a sequence assumed to contain no N characters.
     pub fn new(seq_str: &[u8], k: usize, l: usize) -> (Vec<u64>, Self) {
         let storage = bitpack_fragment(seq_str);
-        let min_positions = msp_minimizer_positions(&storage, seq_str.len(), k, l, 0);
+        let min_positions = msp_minimizer_positions(&storage, seq_str.len(), k, l, 0, &SYNCMER_SCORES_8[..]);
 
         (storage, SuperkmersIterator {
             min_positions,
@@ -165,7 +165,7 @@ impl SuperkmersIterator {
 
         for (offset, fragment) in &fragments {
             let frag_storage = bitpack_fragment(fragment);
-            let positions = msp_minimizer_positions(&frag_storage, fragment.len(), k, l, *offset);
+            let positions = msp_minimizer_positions(&frag_storage, fragment.len(), k, l, *offset, &SYNCMER_SCORES_8[..]);
             all_min_positions.extend(positions);
         }
 
