@@ -81,19 +81,17 @@ fn superkmers_from_fragment(
         l
     );
 
-    // simd-minimizers requires uppercase ASCII
-    let upper: Vec<u8> = ascii_slice.iter().map(|&b| b.to_ascii_uppercase()).collect();
-
+    // simd-minimizers handles both uppercase and lowercase ASCII (ACTGactg)
     let w_sync = l - SMER_SIZE + 1;
     let mut syncmer_pos: Vec<u32> = Vec::new();
     simd_minimizers::canonical_closed_syncmers(SMER_SIZE, w_sync)
-        .run(AsciiSeq(&upper), &mut syncmer_pos);
+        .run(AsciiSeq(ascii_slice), &mut syncmer_pos);
 
     // Check if the l-mer at a syncmer position is all-A or all-T (demoted).
     let is_demoted = |pos: u32| -> bool {
         let p = pos as usize;
-        let b0 = upper[p];
-        (b0 == b'A' || b0 == b'T') && upper[p..p + l].iter().all(|&b| b == b0)
+        let b0 = ascii_slice[p] & 0xDF; // case-insensitive: clear bit 5
+        (b0 == b'A' || b0 == b'T') && ascii_slice[p..p + l].iter().all(|&b| b & 0xDF == b0)
     };
 
     // MSP sliding window: track RIGHTMOST syncmer as minimizer.
