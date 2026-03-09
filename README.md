@@ -4,18 +4,15 @@ A little investigation into constructing super-kmers using syncmers for minimum 
 
 ## Speed considerations
 
-Benchmarked on random sequences, k=31:
+Benchmarked on 150bp random sequences, k=31:
 
-| Method | 150bp | 10Kbp | 1Mbp |
-|--------|------:|------:|-----:|
-| `iteratorsimdmini` (l=9) | 213 MB/s | 367 MB/s | 253 MB/s |
-| `iteratorsyncmersmsp` (l=8) | 202 MB/s | 186 MB/s | 186 MB/s |
-| `iteratorsyncmers2` (l=8) | 179 MB/s | 155 MB/s | 114 MB/s |
-| `msp` (l=8) | 175 MB/s | 168 MB/s | 157 MB/s |
-| `kmc2` (l=8) | 168 MB/s | 136 MB/s | 109 MB/s |
+* The Rust Nthash iterator from Luiz Irber runs at ~380 MB/s (it doesn't compute superkmers).
+* The lexicographic minimizer version of `rust-debruijn` MSP from 10XGenomics reaches ~285 MB/s.
+* From this crate:
+  * `iteratorsimdmini` (l=9), which uses the `simd-minimizers` crate for SIMD-accelerated canonical closed syncmer detection with a sticky MSP sliding window, runs at ~213 MB/s. Requires odd l.
+  * `iteratorsyncmersmsp` (l=8), which wraps the debruijn Scanner with syncmer scoring, runs at ~202 MB/s
+  * `iteratorsyncmers2` (l=8), which uses AVX2 for sequence bit-packing and reimplements the MSP sliding window with syncmer lookup tables, runs at ~179 MB/s. Produces identical output to `iteratorsyncmersmsp`.
+  * `iterator1`, which 100% matches the result of naive, runs at ~102 MB/s
+  * `naive`, which uses nthash but recomputes minimizers for each kmer, runs at ~32 MB/s
 
-- `iteratorsimdmini` uses the `simd-minimizers` crate for SIMD-accelerated canonical closed syncmer detection with a sticky MSP sliding window. Requires odd l.
-- `iteratorsyncmers2` uses AVX2 for sequence bit-packing and reimplements the MSP sliding window with syncmer lookup tables.
-- `iteratorsyncmersmsp` wraps the debruijn Scanner with syncmer scoring. Produces identical output to `iteratorsyncmers2`.
-- `msp` wraps the debruijn Scanner with lexicographic scoring.
-- `kmc2` uses KMC2 disqualification rules for minimizer selection.
+Note: `iteratorsimdmini` scales significantly better on longer sequences (~253 MB/s at 1Mb vs ~114 MB/s for `iteratorsyncmers2`).
