@@ -60,6 +60,7 @@ fn generate_syncmer_scores<const K: usize>() -> Vec<usize> {
         let syncmer = crate::syncmers::find_syncmers(K as usize, S, &[0, K - S], None, &kmer_bytes);
         scores[kmer_int] = syncmer.is_empty() as usize;
     }
+    scores[0] = 1; // Demote all-A l-mer: valid syncmer but causes hot buckets
     scores
 }
 
