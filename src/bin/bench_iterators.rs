@@ -58,6 +58,12 @@ fn main() {
         });
 
         let dna_bytes_ref = &dna_bytes;
+        bench("syncmersmsp (l=8)", &seq, iters, |_s| {
+            let iter = rust_superkmers::iteratorsyncmersmsp::SuperkmersIterator::new(dna_bytes_ref, k, 8);
+            let v: Vec<_> = iter.collect();
+            std::hint::black_box(v);
+        });
+
         bench("msp (l=8)", &seq, iters, |_s| {
             let iter = rust_superkmers::iteratormsp::SuperkmersIterator::new(dna_bytes_ref, k, 8);
             let v: Vec<_> = iter.collect();
