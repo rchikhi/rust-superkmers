@@ -61,6 +61,7 @@ fn generate_syncmer_scores<const K: usize>() -> Vec<usize> {
         scores[kmer_int] = syncmer.is_empty() as usize;
     }
     scores[0] = 1; // Demote all-A l-mer: valid syncmer but causes hot buckets
+    scores[(1 << (2 * K)) - 1] = 1; // Demote all-T l-mer (RC of all-A, same canonical bucket)
     scores
 }
 

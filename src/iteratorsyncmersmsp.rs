@@ -71,19 +71,19 @@ fn generate_syncmers<const K: usize>() -> Vec<bool> {
 
 fn score8(p: &Kmer8) -> usize {
     let kmer = p.to_u64() as usize;
-    if kmer == 0 { return 1; } // Demote all-A l-mer
+    if kmer == 0 || kmer == (1 << (2 * K8)) - 1 { return 1; } // Demote all-A and all-T l-mers
     !SYNCMERS_8[kmer] as usize
 }
 
 fn score10(p: &Kmer10) -> usize {
     let kmer = p.to_u64() as usize;
-    if kmer == 0 { return 1; } // Demote all-A l-mer
+    if kmer == 0 || kmer == (1 << (2 * K10)) - 1 { return 1; } // Demote all-A and all-T l-mers
     !SYNCMERS_10[kmer] as usize
 }
 
 fn score12(p: &Kmer12) -> usize {
     let kmer = p.to_u64() as usize;
-    if kmer == 0 { return 1; } // Demote all-A l-mer
+    if kmer == 0 || kmer == (1 << (2 * K12)) - 1 { return 1; } // Demote all-A and all-T l-mers
     !SYNCMERS_12[kmer] as usize
 }
 
