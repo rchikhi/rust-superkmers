@@ -103,7 +103,9 @@ They are demoted (score 0→1) so they're only selected when no other syncmer ex
 Both forward-strand encodings must be demoted (`scores[0]` for AAA...A, `scores[4^l-1]` for
 TTT...T) because scoring happens before canonicalization. Applied to `iteratorsyncmers2`,
 `iteratorsyncmersmsp`, and `iteratorsimdmini`. The `iteratormsp` uses `usize::MAX` (original
-fix from 2024, commit 3a7b239). The SIMD iterator demotes during rescan only (when the current
-minimizer falls off the left edge), not mid-slide — slightly suboptimal but correct and simple.
+fix from 2024, commit 3a7b239). The SIMD iterator demotes lazily during rescan only (when the
+current minimizer falls off the left edge), not mid-slide — correct and simple but adds ~16%
+overhead on 1M random DNA (295→249 MB/s) due to closure capture and macro expansion in the
+hot loop.
 
 Run: `cargo +nightly run --release --bin bucket_stats <genome.fa> [k] [l] [syncmer|kmc2|msp|simdmini|multimini[:N]]`

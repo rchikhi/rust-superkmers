@@ -89,48 +89,45 @@ fn superkmers_from_fragment(
     simd_minimizers::canonical_closed_syncmers(SMER_SIZE, w_sync)
         .run(AsciiSeq(&upper), &mut syncmer_pos);
 
-    // Mark all-A and all-T l-mer positions as demoted (valid syncmers but cause
-    // hot buckets). Only used as minimizer when no other syncmer exists in window.
-    let demoted: Vec<bool> = syncmer_pos.iter().map(|&pos| {
+    // Check if the l-mer at a syncmer position is all-A or all-T (demoted).
+    let is_demoted = |pos: u32| -> bool {
         let p = pos as usize;
-        let slice = &upper[p..p + l];
-        slice.iter().all(|&b| b == b'A') || slice.iter().all(|&b| b == b'T')
-    }).collect();
-
-    // Scan syncmer_pos[from..] within [lo, hi] and return the best position:
-    // rightmost non-demoted, or rightmost demoted if no non-demoted exists.
-    let scan_best = |from: usize, lo: usize, hi: usize| -> u32 {
-        let mut best: u32 = u32::MAX;
-        let mut best_demoted = true;
-        let mut j = from;
-        while j < syncmer_pos.len() && (syncmer_pos[j] as usize) <= hi {
-            let p = syncmer_pos[j] as usize;
-            if p >= lo {
-                let d = demoted[j];
-                if best == u32::MAX || (!d && best_demoted) || (d == best_demoted) {
-                    best = syncmer_pos[j];
-                    best_demoted = d;
-                }
-            }
-            j += 1;
-        }
-        best
+        let b0 = upper[p];
+        (b0 == b'A' || b0 == b'T') && upper[p..p + l].iter().all(|&b| b == b0)
     };
 
     // MSP sliding window: track RIGHTMOST syncmer as minimizer.
-    // Two-tier: prefer non-demoted during rescan; sticky between rescans.
+    // After each rescan, if the rightmost is demoted (all-A/T), fall back to
+    // the rightmost non-demoted in the same range. ~16% overhead on 1M random DNA.
     let num_kmers = seq_len - k + 1;
     let max_lmer_offset = k - l;
     let mut ptr = 0usize;
     let mut curr_min_pos: u32 = u32::MAX;
     let mut sk_start: usize = 0;
 
-    // Initialize: find best syncmer in first k-mer window [0, k-l]
+    // After taking rightmost in syncmer_pos[from..j_end], demote if needed.
+    macro_rules! demote_check {
+        ($from:expr, $j_end:expr) => {
+            if curr_min_pos != u32::MAX && is_demoted(curr_min_pos) {
+                let mut best = u32::MAX;
+                let mut di = $from;
+                while di < $j_end {
+                    if !is_demoted(syncmer_pos[di]) { best = syncmer_pos[di]; }
+                    di += 1;
+                }
+                if best != u32::MAX { curr_min_pos = best; }
+            }
+        };
+    }
+
+    // Initialize: find rightmost syncmer in first k-mer window [0, k-l]
     if num_kmers > 0 {
-        curr_min_pos = scan_best(0, 0, max_lmer_offset);
+        let start_ptr = ptr;
         while ptr < syncmer_pos.len() && (syncmer_pos[ptr] as usize) <= max_lmer_offset {
+            curr_min_pos = syncmer_pos[ptr];
             ptr += 1;
         }
+        if ptr > start_ptr { demote_check!(start_ptr, ptr); }
     }
 
     let mut i = 1usize;
@@ -169,7 +166,13 @@ fn superkmers_from_fragment(
                 while ptr < syncmer_pos.len() && (syncmer_pos[ptr] as usize) < i {
                     ptr += 1;
                 }
-                curr_min_pos = scan_best(ptr, i, i + max_lmer_offset);
+                let scan_from = ptr;
+                let mut j = ptr;
+                while j < syncmer_pos.len() && (syncmer_pos[j] as usize) <= i + max_lmer_offset {
+                    curr_min_pos = syncmer_pos[j];
+                    j += 1;
+                }
+                if j > scan_from { demote_check!(scan_from, j); }
                 // No syncmer in this window — jump to next syncmer position
                 if curr_min_pos == u32::MAX && ptr < syncmer_pos.len() {
                     let next_sync = syncmer_pos[ptr] as usize;
@@ -182,7 +185,14 @@ fn superkmers_from_fragment(
                     if jump_to > i {
                         sk_start = jump_to;
                         i = jump_to;
-                        curr_min_pos = scan_best(ptr, i, i + max_lmer_offset);
+                        // Re-scan for syncmers in [jump_to, jump_to+max_lmer_offset]
+                        let scan_from2 = ptr;
+                        let mut j2 = ptr;
+                        while j2 < syncmer_pos.len() && (syncmer_pos[j2] as usize) <= i + max_lmer_offset {
+                            curr_min_pos = syncmer_pos[j2];
+                            j2 += 1;
+                        }
+                        if j2 > scan_from2 { demote_check!(scan_from2, j2); }
                     }
                 }
             }
