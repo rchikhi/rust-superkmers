@@ -109,3 +109,17 @@ overhead on 1M random DNA (295→249 MB/s) due to closure capture and macro expa
 hot loop.
 
 Run: `cargo +nightly run --release --bin bucket_stats <genome.fa> [k] [l] [syncmer|kmc2|msp|simdmini|multimini[:N]]`
+
+## Profiling
+
+On hybrid CPUs (Intel Alder Lake / Raptor Lake), `perf record` captures two event types:
+`cpu_atom/cycles/` (efficiency cores) and `cpu_core/cycles/` (performance cores). The atom
+profile appears first in `perf report` and is misleading — focus on the `cpu_core/cycles/`
+section (the one with ~100x more samples). Always `rm -f perf.data perf.data.old` between runs.
+
+```bash
+# Profile:
+perf record -o /tmp/perf_superkmers.data --call-graph dwarf -- target/release/bench_iterators
+# Report (flat, ≥1% overhead):
+perf report -i /tmp/perf_superkmers.data --stdio --no-children -g none --percent-limit 1
+```

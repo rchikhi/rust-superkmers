@@ -12,7 +12,7 @@ fn random_dna(len: usize, seed: u64) -> Vec<u8> {
         .collect()
 }
 
-fn bench<F: Fn(&[u8])>(name: &str, seq: &[u8], iters: u32, f: F) {
+fn bench<F: FnMut(&[u8])>(name: &str, seq: &[u8], iters: u32, mut f: F) {
     // warmup
     for _ in 0..3 {
         f(seq);
@@ -77,5 +77,23 @@ fn main() {
             let v: Vec<_> = iter.collect();
             std::hint::black_box(v);
         });
+
+        // Extractor benchmarks (reusable buffers, amortized across reads)
+        {
+            let mut ext2 = rust_superkmers::iteratorsyncmers2::SuperkmerExtractor::new(k, 8);
+            bench("syncmers2-ext (l=8)", &seq, iters, |s| {
+                let sks = ext2.process(s);
+                std::hint::black_box(sks);
+            });
+        }
+
+        #[cfg(feature = "simd-mini")]
+        {
+            let mut ext_simd = rust_superkmers::iteratorsimdmini::SuperkmerExtractor::new(k, 9);
+            bench("simdmini-ext (l=9)", &seq, iters, |s| {
+                let sks = ext_simd.process(s);
+                std::hint::black_box(sks);
+            });
+        }
     }
 }

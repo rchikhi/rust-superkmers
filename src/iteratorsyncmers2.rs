@@ -130,7 +130,7 @@ impl PartialOrd for MinPos {
 /// Run MSP sliding window on a single fragment, returning (kmer_start, minimizer_pos, minimizer_kmer, fragment_end).
 /// All positions are absolute (offset already added).
 /// `scores` maps each l-mer integer value to its score (lower = better minimizer).
-fn msp_minimizer_positions(storage: &[u64], frag_len: usize, k: usize, l: usize, offset: usize, scores: &[usize]) -> Vec<(usize, usize, usize, usize)> {
+fn msp_minimizer_positions_into(storage: &[u64], frag_len: usize, k: usize, l: usize, offset: usize, scores: &[usize], min_positions: &mut Vec<(usize, usize, usize, usize)>) {
     let mp = |pos: usize| -> MinPos {
         let kmer = get_kmer_value(storage, pos, l);
         let val = scores[kmer];
@@ -147,7 +147,6 @@ fn msp_minimizer_positions(storage: &[u64], frag_len: usize, k: usize, l: usize,
     };
 
     let frag_end = offset + frag_len;
-    let mut min_positions: Vec<(usize, usize, usize, usize)> = Vec::new();
 
     if frag_len >= k {
         let mut min_pos = find_min(0, k - l);
@@ -165,8 +164,6 @@ fn msp_minimizer_positions(storage: &[u64], frag_len: usize, k: usize, l: usize,
             }
         }
     }
-
-    min_positions
 }
 
 pub struct SuperkmersIterator {
@@ -207,7 +204,8 @@ impl SuperkmersIterator {
     fn new_inner(seq_str: &[u8], k: usize, l: usize, canonical: bool) -> Self {
         let storage = bitpack_fragment(seq_str);
         let scores = syncmer_scores(l);
-        let min_positions = msp_minimizer_positions(&storage, seq_str.len(), k, l, 0, scores);
+        let mut min_positions = Vec::new();
+        msp_minimizer_positions_into(&storage, seq_str.len(), k, l, 0, scores, &mut min_positions);
 
         SuperkmersIterator {
             min_positions,
@@ -228,8 +226,7 @@ impl SuperkmersIterator {
 
         for (offset, fragment) in &fragments {
             let frag_storage = bitpack_fragment(fragment);
-            let positions = msp_minimizer_positions(&frag_storage, fragment.len(), k, l, *offset, scores);
-            all_min_positions.extend(positions);
+            msp_minimizer_positions_into(&frag_storage, fragment.len(), k, l, *offset, scores, &mut all_min_positions);
         }
 
         SuperkmersIterator {
@@ -280,5 +277,106 @@ impl Iterator for SuperkmersIterator {
             mpos: (min_abs_pos - start_pos) as u16,
             mint_is_rc,
         })
+    }
+}
+
+/// Convert min_positions to superkmers.
+fn materialize_superkmers(min_positions: &[(usize, usize, usize, usize)], k: usize, l: usize, canonical: bool, out: &mut Vec<Superkmer>) {
+    let canon_table = if canonical { Some(canonical_table(l)) } else { None };
+    for p in 0..min_positions.len() {
+        let (start_pos, min_abs_pos, min_kmer, frag_end) = min_positions[p];
+        let size = if p < min_positions.len() - 1 {
+            let (next_pos, _, _, next_frag_end) = min_positions[p + 1];
+            if next_frag_end == frag_end {
+                next_pos + k - 1 - start_pos
+            } else {
+                frag_end - start_pos
+            }
+        } else {
+            frag_end - start_pos
+        };
+        let (mint, mint_is_rc) = if let Some(table) = canon_table {
+            table[min_kmer]
+        } else {
+            (min_kmer as u32, false)
+        };
+        out.push(Superkmer {
+            start: start_pos,
+            mint,
+            size: size as u16,
+            mpos: (min_abs_pos - start_pos) as u16,
+            mint_is_rc,
+        });
+    }
+}
+
+/// Reusable superkmer extractor that avoids per-read allocations.
+/// Create once, call `process()` or `process_with_n()` for each read.
+pub struct SuperkmerExtractor {
+    superkmers: Vec<Superkmer>,
+    min_positions: Vec<(usize, usize, usize, usize)>,
+    storage: Vec<u64>,
+    frag_storage: Vec<u64>,
+    k: usize,
+    l: usize,
+    canonical: bool,
+}
+
+impl SuperkmerExtractor {
+    pub fn new(k: usize, l: usize) -> Self {
+        Self::new_inner(k, l, true)
+    }
+
+    pub fn non_canonical(k: usize, l: usize) -> Self {
+        Self::new_inner(k, l, false)
+    }
+
+    fn new_inner(k: usize, l: usize, canonical: bool) -> Self {
+        SuperkmerExtractor {
+            superkmers: Vec::new(),
+            min_positions: Vec::new(),
+            storage: Vec::new(),
+            frag_storage: Vec::new(),
+            k,
+            l,
+            canonical,
+        }
+    }
+
+    /// Process a sequence with no N characters. Returns the superkmers slice.
+    pub fn process(&mut self, seq: &[u8]) -> &[Superkmer] {
+        self.superkmers.clear();
+        self.min_positions.clear();
+        let num_words = (seq.len() + 31) / 32;
+        self.storage.resize(num_words, 0);
+        crate::utils::bitpack_fragment_into(seq, &mut self.storage);
+        let scores = syncmer_scores(self.l);
+        msp_minimizer_positions_into(&self.storage, seq.len(), self.k, self.l, 0, scores, &mut self.min_positions);
+        materialize_superkmers(&self.min_positions, self.k, self.l, self.canonical, &mut self.superkmers);
+        &self.superkmers
+    }
+
+    /// Process a sequence that may contain N/n characters. Returns the superkmers slice.
+    pub fn process_with_n(&mut self, seq: &[u8]) -> &[Superkmer] {
+        self.superkmers.clear();
+        self.min_positions.clear();
+        let num_words = (seq.len() + 31) / 32;
+        self.storage.resize(num_words, 0);
+        crate::utils::bitpack_fragment_into(seq, &mut self.storage);
+        let scores = syncmer_scores(self.l);
+        let fragments = crate::utils::split_on_n(seq, self.k);
+        for (offset, fragment) in &fragments {
+            let frag_words = (fragment.len() + 31) / 32;
+            self.frag_storage.resize(frag_words, 0);
+            crate::utils::bitpack_fragment_into(fragment, &mut self.frag_storage);
+            msp_minimizer_positions_into(&self.frag_storage, fragment.len(), self.k, self.l, *offset, scores, &mut self.min_positions);
+        }
+        materialize_superkmers(&self.min_positions, self.k, self.l, self.canonical, &mut self.superkmers);
+        &self.superkmers
+    }
+
+    /// Access the 2-bit packed representation of the last processed sequence.
+    pub fn storage(&self) -> &[u64] {
+        &self.storage
     }
 }

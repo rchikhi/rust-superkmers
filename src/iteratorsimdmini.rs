@@ -67,6 +67,7 @@ fn superkmers_from_fragment(
     offset: usize,
     canonical: bool,
     results: &mut Vec<Superkmer>,
+    syncmer_pos: &mut Vec<u32>,
 ) {
     use simd_minimizers::packed_seq::AsciiSeq;
 
@@ -83,9 +84,9 @@ fn superkmers_from_fragment(
 
     // simd-minimizers handles both uppercase and lowercase ASCII (ACTGactg)
     let w_sync = l - SMER_SIZE + 1;
-    let mut syncmer_pos: Vec<u32> = Vec::new();
+    syncmer_pos.clear();
     simd_minimizers::canonical_closed_syncmers(SMER_SIZE, w_sync)
-        .run(AsciiSeq(ascii_slice), &mut syncmer_pos);
+        .run(AsciiSeq(ascii_slice), syncmer_pos);
 
     // Check if the l-mer at a syncmer position is all-A or all-T (demoted).
     let is_demoted = |pos: u32| -> bool {
@@ -102,6 +103,7 @@ fn superkmers_from_fragment(
     let mut ptr = 0usize;
     let mut curr_min_pos: u32 = u32::MAX;
     let mut sk_start: usize = 0;
+    results.reserve(syncmer_pos.len());
 
     // After taking rightmost in syncmer_pos[from..j_end], demote if needed.
     macro_rules! demote_check {
@@ -195,7 +197,14 @@ fn superkmers_from_fragment(
                 }
             }
         }
-        i += 1;
+        // Jump directly to when the current minimizer falls off the left edge.
+        // Between here and there, need_new_min is always false (no work done).
+        if curr_min_pos != u32::MAX {
+            let jump = curr_min_pos as usize + 1;
+            i = if jump > i + 1 { std::cmp::min(jump, num_kmers) } else { i + 1 };
+        } else {
+            i += 1;
+        }
     }
 }
 
@@ -234,7 +243,8 @@ impl SuperkmersIterator {
     fn new_inner(seq: &[u8], k: usize, l: usize, canonical: bool) -> Self {
         let storage = crate::utils::bitpack_fragment(seq);
         let mut superkmers = Vec::new();
-        superkmers_from_fragment(seq, k, l, 0, canonical, &mut superkmers);
+        let mut syncmer_pos = Vec::new();
+        superkmers_from_fragment(seq, k, l, 0, canonical, &mut superkmers, &mut syncmer_pos);
         SuperkmersIterator { superkmers, storage, pos: 0 }
     }
 
@@ -242,8 +252,9 @@ impl SuperkmersIterator {
         let storage = crate::utils::bitpack_fragment(seq);
         let fragments = crate::utils::split_on_n(seq, k);
         let mut superkmers = Vec::new();
+        let mut syncmer_pos = Vec::new();
         for (offset, fragment) in &fragments {
-            superkmers_from_fragment(fragment, k, l, *offset, canonical, &mut superkmers);
+            superkmers_from_fragment(fragment, k, l, *offset, canonical, &mut superkmers, &mut syncmer_pos);
         }
         SuperkmersIterator { superkmers, storage, pos: 0 }
     }
@@ -266,6 +277,66 @@ impl Iterator for SuperkmersIterator {
             mpos: self.superkmers[idx].mpos,
             mint_is_rc: self.superkmers[idx].mint_is_rc,
         })
+    }
+}
+
+/// Reusable superkmer extractor that avoids per-read allocations.
+/// Create once, call `process()` or `process_with_n()` for each read.
+pub struct SuperkmerExtractor {
+    superkmers: Vec<Superkmer>,
+    syncmer_pos: Vec<u32>,
+    storage: Vec<u64>,
+    k: usize,
+    l: usize,
+    canonical: bool,
+}
+
+impl SuperkmerExtractor {
+    pub fn new(k: usize, l: usize) -> Self {
+        Self::new_inner(k, l, true)
+    }
+
+    pub fn non_canonical(k: usize, l: usize) -> Self {
+        Self::new_inner(k, l, false)
+    }
+
+    fn new_inner(k: usize, l: usize, canonical: bool) -> Self {
+        SuperkmerExtractor {
+            superkmers: Vec::new(),
+            syncmer_pos: Vec::new(),
+            storage: Vec::new(),
+            k,
+            l,
+            canonical,
+        }
+    }
+
+    /// Process a sequence with no N characters. Returns the superkmers slice.
+    pub fn process(&mut self, seq: &[u8]) -> &[Superkmer] {
+        self.superkmers.clear();
+        let num_words = (seq.len() + 31) / 32;
+        self.storage.resize(num_words, 0);
+        crate::utils::bitpack_fragment_into(seq, &mut self.storage);
+        superkmers_from_fragment(seq, self.k, self.l, 0, self.canonical, &mut self.superkmers, &mut self.syncmer_pos);
+        &self.superkmers
+    }
+
+    /// Process a sequence that may contain N/n characters. Returns the superkmers slice.
+    pub fn process_with_n(&mut self, seq: &[u8]) -> &[Superkmer] {
+        self.superkmers.clear();
+        let num_words = (seq.len() + 31) / 32;
+        self.storage.resize(num_words, 0);
+        crate::utils::bitpack_fragment_into(seq, &mut self.storage);
+        let fragments = crate::utils::split_on_n(seq, self.k);
+        for (offset, fragment) in &fragments {
+            superkmers_from_fragment(fragment, self.k, self.l, *offset, self.canonical, &mut self.superkmers, &mut self.syncmer_pos);
+        }
+        &self.superkmers
+    }
+
+    /// Access the 2-bit packed representation of the last processed sequence.
+    pub fn storage(&self) -> &[u64] {
+        &self.storage
     }
 }
 
