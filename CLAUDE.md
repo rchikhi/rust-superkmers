@@ -96,4 +96,14 @@ reads (150-300bp), not whole chromosomes.
   KMC2 disqualification is counterproductive on top of syncmers — it removes valid candidates
   without providing better alternatives.
 
+## Homopolymer Minimizer Demotion
+
+All-A and all-T l-mers are valid closed syncmers but cause hot buckets on repeat-rich genomes.
+They are demoted (score 0→1) so they're only selected when no other syncmer exists in the window.
+Both forward-strand encodings must be demoted (`scores[0]` for AAA...A, `scores[4^l-1]` for
+TTT...T) because scoring happens before canonicalization. Applied to `iteratorsyncmers2` and
+`iteratorsyncmersmsp`. The `iteratormsp` uses `usize::MAX` (original fix from 2024, commit
+3a7b239). The `iteratorsimdmini` is a known gap — its position-list MSP architecture can't
+support two-tier scoring without a major rewrite.
+
 Run: `cargo +nightly run --release --bin bucket_stats <genome.fa> [k] [l] [syncmer|kmc2|msp|simdmini|multimini[:N]]`
