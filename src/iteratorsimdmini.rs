@@ -89,17 +89,46 @@ fn superkmers_from_fragment(
     simd_minimizers::canonical_closed_syncmers(SMER_SIZE, w_sync)
         .run(AsciiSeq(&upper), &mut syncmer_pos);
 
+    // Mark all-A and all-T l-mer positions as demoted (valid syncmers but cause
+    // hot buckets). Only used as minimizer when no other syncmer exists in window.
+    let demoted: Vec<bool> = syncmer_pos.iter().map(|&pos| {
+        let p = pos as usize;
+        let slice = &upper[p..p + l];
+        slice.iter().all(|&b| b == b'A') || slice.iter().all(|&b| b == b'T')
+    }).collect();
+
+    // Scan syncmer_pos[from..] within [lo, hi] and return the best position:
+    // rightmost non-demoted, or rightmost demoted if no non-demoted exists.
+    let scan_best = |from: usize, lo: usize, hi: usize| -> u32 {
+        let mut best: u32 = u32::MAX;
+        let mut best_demoted = true;
+        let mut j = from;
+        while j < syncmer_pos.len() && (syncmer_pos[j] as usize) <= hi {
+            let p = syncmer_pos[j] as usize;
+            if p >= lo {
+                let d = demoted[j];
+                if best == u32::MAX || (!d && best_demoted) || (d == best_demoted) {
+                    best = syncmer_pos[j];
+                    best_demoted = d;
+                }
+            }
+            j += 1;
+        }
+        best
+    };
+
     // MSP sliding window: track RIGHTMOST syncmer as minimizer.
+    // Two-tier: prefer non-demoted during rescan; sticky between rescans.
     let num_kmers = seq_len - k + 1;
     let max_lmer_offset = k - l;
     let mut ptr = 0usize;
     let mut curr_min_pos: u32 = u32::MAX;
     let mut sk_start: usize = 0;
 
-    // Initialize: find rightmost syncmer in first k-mer window [0, k-l]
+    // Initialize: find best syncmer in first k-mer window [0, k-l]
     if num_kmers > 0 {
+        curr_min_pos = scan_best(0, 0, max_lmer_offset);
         while ptr < syncmer_pos.len() && (syncmer_pos[ptr] as usize) <= max_lmer_offset {
-            curr_min_pos = syncmer_pos[ptr];
             ptr += 1;
         }
     }
@@ -140,11 +169,7 @@ fn superkmers_from_fragment(
                 while ptr < syncmer_pos.len() && (syncmer_pos[ptr] as usize) < i {
                     ptr += 1;
                 }
-                let mut j = ptr;
-                while j < syncmer_pos.len() && (syncmer_pos[j] as usize) <= i + max_lmer_offset {
-                    curr_min_pos = syncmer_pos[j];
-                    j += 1;
-                }
+                curr_min_pos = scan_best(ptr, i, i + max_lmer_offset);
                 // No syncmer in this window — jump to next syncmer position
                 if curr_min_pos == u32::MAX && ptr < syncmer_pos.len() {
                     let next_sync = syncmer_pos[ptr] as usize;
@@ -157,12 +182,7 @@ fn superkmers_from_fragment(
                     if jump_to > i {
                         sk_start = jump_to;
                         i = jump_to;
-                        // Re-scan for syncmers in [jump_to, jump_to+max_lmer_offset]
-                        let mut j2 = ptr;
-                        while j2 < syncmer_pos.len() && (syncmer_pos[j2] as usize) <= i + max_lmer_offset {
-                            curr_min_pos = syncmer_pos[j2];
-                            j2 += 1;
-                        }
+                        curr_min_pos = scan_best(ptr, i, i + max_lmer_offset);
                     }
                 }
             }
