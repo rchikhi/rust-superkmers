@@ -12,7 +12,7 @@
 //! let iter = rust_superkmers::iteratorsyncmers2::SuperkmersIterator::non_canonical(seq, 21, 8);
 //! for sk in iter { /* forward-strand mint */ }
 //! ```
-use crate::{Superkmer, SplitMode};
+use crate::{Superkmer, SuperkmerParts, SplitMode};
 use lazy_static::lazy_static;
 
 const S: usize = 2; //syncmer's s parameter
@@ -191,23 +191,20 @@ impl PartialOrd for MinPos {
 
 /// Run MSP sliding window on a single fragment, returning (kmer_start, minimizer_pos, minimizer_kmer, fragment_end).
 /// All positions are absolute (offset already added).
-/// `scores` maps each l-mer integer value to its score (lower = better minimizer).
-fn msp_minimizer_positions_into(storage: &[u64], frag_len: usize, k: usize, l: usize, offset: usize, mode: SplitMode, min_positions: &mut Vec<(usize, usize, usize, usize)>) {
-    // Dispatch to const-generic version so the compiler monomorphizes and
-    // eliminates the mode branch from the hot loop.
+/// `scores_buf` and `deque` are reusable scratch buffers (unused for Sticky mode).
+fn msp_syncmer_positions_into(storage: &[u64], frag_len: usize, k: usize, l: usize, offset: usize, mode: SplitMode, min_positions: &mut Vec<(usize, usize, usize, usize)>, scores_buf: &mut Vec<usize>, deque: &mut Vec<usize>) {
     match mode {
-        SplitMode::Classical => msp_minimizer_positions_inner::<true>(storage, frag_len, k, l, offset, mode, min_positions),
-        _ => msp_minimizer_positions_inner::<false>(storage, frag_len, k, l, offset, mode, min_positions),
+        SplitMode::Sticky => msp_syncmer_positions_sticky(storage, frag_len, k, l, offset, min_positions),
+        SplitMode::Classical => msp_syncmer_positions_deque::<true>(storage, frag_len, k, l, offset, mode, min_positions, scores_buf, deque),
+        _ => msp_syncmer_positions_deque::<false>(storage, frag_len, k, l, offset, mode, min_positions, scores_buf, deque),
     }
 }
 
+/// Sticky mode: single-pass with rescan on falloff. Rescans are rare because
+/// equal-score l-mers (all syncmers have score 0) never replace the current minimizer.
 #[inline(always)]
-fn msp_minimizer_positions_inner<const CLASSICAL: bool>(storage: &[u64], frag_len: usize, k: usize, l: usize, offset: usize, mode: SplitMode, min_positions: &mut Vec<(usize, usize, usize, usize)>) {
-    let scores = match mode {
-        SplitMode::Msp => msp_syncmer_scores(l),
-        SplitMode::MspXor => mspxor_syncmer_scores(l),
-        _ => syncmer_scores(l),
-    };
+fn msp_syncmer_positions_sticky(storage: &[u64], frag_len: usize, k: usize, l: usize, offset: usize, min_positions: &mut Vec<(usize, usize, usize, usize)>) {
+    let scores = syncmer_scores(l);
     let mp = |pos: usize| -> MinPos {
         let kmer = get_kmer_value(storage, pos, l);
         let val = scores[kmer];
@@ -229,8 +226,6 @@ fn msp_minimizer_positions_inner<const CLASSICAL: bool>(storage: &[u64], frag_le
         let mut min_pos = find_min(0, k - l);
         min_positions.push((offset, min_pos.pos + offset, min_pos.kmer, frag_end));
 
-        // Rolling l-mer: maintain the entering l-mer incrementally.
-        // Each iteration, shift left by 2 bits, OR in the new rightmost base, mask to l*2 bits.
         let mask = (1usize << (l * 2)) - 1;
         let mut rolling_kmer = get_kmer_value(storage, k - l, l);
 
@@ -243,10 +238,107 @@ fn msp_minimizer_positions_inner<const CLASSICAL: bool>(storage: &[u64], frag_le
             if i > min_pos.pos {
                 min_pos = find_min(i, i + k - l);
                 min_positions.push((i + offset, min_pos.pos + offset, min_pos.kmer, frag_end));
-            } else if if CLASSICAL { end_pos < min_pos } else { end_pos.val < min_pos.val } {
+            } else if end_pos.val < min_pos.val {
                 min_pos = end_pos;
                 min_positions.push((i + offset, min_pos.pos + offset, min_pos.kmer, frag_end));
             }
+        }
+    }
+}
+
+/// Non-sticky modes (Classical, Msp, MspXor): two-pass with monotonic deque.
+/// Pass 1: precompute all l-mer scores into `scores_buf`.
+/// Pass 2: sliding window minimum via deque (amortized O(1) per step, no rescans).
+/// CLASSICAL=true: rightmost wins on tie (pop back on >=).
+/// CLASSICAL=false: leftmost wins on tie (pop back on >).
+#[inline(always)]
+fn msp_syncmer_positions_deque<const CLASSICAL: bool>(
+    storage: &[u64], frag_len: usize, k: usize, l: usize, offset: usize,
+    mode: SplitMode, min_positions: &mut Vec<(usize, usize, usize, usize)>,
+    scores_buf: &mut Vec<usize>, deque: &mut Vec<usize>,
+) {
+    let scores = match mode {
+        SplitMode::Msp => msp_syncmer_scores(l),
+        SplitMode::MspXor => mspxor_syncmer_scores(l),
+        _ => syncmer_scores(l),
+    };
+
+    let frag_end = offset + frag_len;
+    if frag_len < k { return; }
+
+    let num_lmers = frag_len - l + 1;
+    let w = k - l + 1; // number of l-mers per k-mer window
+
+    // Ensure buffers have enough capacity; we index by position directly.
+    if scores_buf.len() < num_lmers { scores_buf.resize(num_lmers, 0); }
+    if deque.len() < num_lmers { deque.resize(num_lmers, 0); }
+    let sc = &mut scores_buf[..num_lmers];
+    let dq = &mut deque[..num_lmers];
+
+    // Pass 1: precompute all l-mer scores via rolling kmer
+    let mask = (1usize << (l * 2)) - 1;
+    let mut rolling = get_kmer_value(storage, 0, l);
+    sc[0] = scores[rolling];
+    for pos in 1..num_lmers {
+        let new_base = get_base(storage, pos + l - 1);
+        rolling = ((rolling << 2) | new_base) & mask;
+        sc[pos] = scores[rolling];
+    }
+
+    // Pass 2: monotonic deque sliding window minimum
+    // dq[head..tail] stores l-mer positions in increasing order, with scores
+    // monotonically non-decreasing from front to back.
+    // Safety: head <= tail <= num_lmers, and each element is pushed/popped at most once.
+    let mut head = 0usize;
+    let mut tail = 0usize;
+
+    // Fill first window (l-mer positions 0..w-1)
+    for pos in 0..w {
+        while tail > head {
+            let back = dq[tail - 1];
+            let dominated = if CLASSICAL {
+                sc[back] >= sc[pos]
+            } else {
+                sc[back] > sc[pos]
+            };
+            if dominated { tail -= 1; } else { break; }
+        }
+        dq[tail] = pos;
+        tail += 1;
+    }
+
+    // Emit first superkmer
+    let mut prev_min_pos = dq[head];
+    let min_kmer = get_kmer_value(storage, prev_min_pos, l);
+    min_positions.push((offset, prev_min_pos + offset, min_kmer, frag_end));
+
+    // Slide: k-mer at position i covers l-mer positions i..i+w-1
+    for i in 1..(frag_len - k + 1) {
+        let new_lmer_pos = i + w - 1;
+
+        // Pop front if it fell off the left edge
+        while dq[head] < i {
+            head += 1;
+        }
+
+        // Push new element, popping dominated elements from back
+        while tail > head {
+            let back = dq[tail - 1];
+            let dominated = if CLASSICAL {
+                sc[back] >= sc[new_lmer_pos]
+            } else {
+                sc[back] > sc[new_lmer_pos]
+            };
+            if dominated { tail -= 1; } else { break; }
+        }
+        dq[tail] = new_lmer_pos;
+        tail += 1;
+
+        let cur_min_pos = dq[head];
+        if cur_min_pos != prev_min_pos {
+            let min_kmer = get_kmer_value(storage, cur_min_pos, l);
+            min_positions.push((i + offset, cur_min_pos + offset, min_kmer, frag_end));
+            prev_min_pos = cur_min_pos;
         }
     }
 }
@@ -293,8 +385,11 @@ impl SuperkmersIterator {
 
     fn new_inner_full(seq_str: &[u8], k: usize, l: usize, canonical: bool, mode: SplitMode) -> Self {
         let storage = bitpack_fragment(seq_str);
+        let num_lmers = seq_str.len().saturating_sub(l - 1);
         let mut min_positions = Vec::new();
-        msp_minimizer_positions_into(&storage, seq_str.len(), k, l, 0, mode, &mut min_positions);
+        let mut scores_buf = Vec::with_capacity(num_lmers);
+        let mut deque = Vec::with_capacity(num_lmers);
+        msp_syncmer_positions_into(&storage, seq_str.len(), k, l, 0, mode, &mut min_positions, &mut scores_buf, &mut deque);
 
         SuperkmersIterator {
             min_positions,
@@ -311,10 +406,13 @@ impl SuperkmersIterator {
         let full_storage = bitpack_fragment(seq_str);
 
         let mut all_min_positions: Vec<(usize, usize, usize, usize)> = Vec::new();
+        let num_lmers = seq_str.len().saturating_sub(l - 1);
+        let mut scores_buf = Vec::with_capacity(num_lmers);
+        let mut deque = Vec::with_capacity(num_lmers);
 
         for (offset, fragment) in &fragments {
             let frag_storage = bitpack_fragment(fragment);
-            msp_minimizer_positions_into(&frag_storage, fragment.len(), k, l, *offset, mode, &mut all_min_positions);
+            msp_syncmer_positions_into(&frag_storage, fragment.len(), k, l, *offset, mode, &mut all_min_positions, &mut scores_buf, &mut deque);
         }
 
         SuperkmersIterator {
@@ -398,13 +496,80 @@ fn materialize_superkmers(min_positions: &[(usize, usize, usize, usize)], k: usi
     }
 }
 
+/// Reverse-complement a right-aligned packed sequence of `len` bases in a u64.
+/// A=0↔T=3, C=1↔G=2. Result is right-aligned.
+#[inline]
+fn rc_packed(val: u64, len: usize) -> u64 {
+    let mut rc = 0u64;
+    let mut v = val;
+    for _ in 0..len {
+        rc = (rc << 2) | (3 - (v & 3));
+        v >>= 2;
+    }
+    rc
+}
+
+/// Convert min_positions to self-contained SuperkmerParts (left + canonical_mint + right).
+///
+/// When `canonical` is true and `mint_is_rc`, parts are pre-oriented to canonical orientation:
+/// left and right are swapped and reverse-complemented so the consumer always sees
+/// (left_context, canonical_minimizer, right_context) in the canonical strand.
+///
+/// Values are right-aligned (LSB) in u64. To MSB-align for byte-oriented output:
+/// `word << (64 - len * 2)` then `.to_be_bytes()[..ceil(len * 2, 8)]`.
+fn materialize_parts(storage: &[u64], min_positions: &[(usize, usize, usize, usize)], k: usize, l: usize, canonical: bool, out: &mut Vec<SuperkmerParts>) {
+    let canon_table = if canonical { Some(canonical_table(l)) } else { None };
+    for p in 0..min_positions.len() {
+        let (start_pos, min_abs_pos, min_kmer, frag_end) = min_positions[p];
+        let size = if p < min_positions.len() - 1 {
+            let (next_pos, _, _, next_frag_end) = min_positions[p + 1];
+            if next_frag_end == frag_end {
+                next_pos + k - 1 - start_pos
+            } else {
+                frag_end - start_pos
+            }
+        } else {
+            frag_end - start_pos
+        };
+        let mpos = min_abs_pos - start_pos;
+        let (canonical_mint, mint_is_rc) = if let Some(table) = canon_table {
+            table[min_kmer]
+        } else {
+            (min_kmer as u32, false)
+        };
+        let fwd_left_len = mpos;
+        let fwd_right_len = size - mpos - l;
+        let fwd_left = if fwd_left_len > 0 { get_kmer_value(storage, start_pos, fwd_left_len) as u64 } else { 0 };
+        let fwd_right = if fwd_right_len > 0 { get_kmer_value(storage, min_abs_pos + l, fwd_right_len) as u64 } else { 0 };
+
+        // Pre-orient: when mint_is_rc, the canonical strand is the RC of the forward strand.
+        // RC reverses the whole superkmer, so left↔right swap and each gets RC'd.
+        let (left, right, left_len, right_len) = if mint_is_rc {
+            (rc_packed(fwd_right, fwd_right_len), rc_packed(fwd_left, fwd_left_len), fwd_right_len, fwd_left_len)
+        } else {
+            (fwd_left, fwd_right, fwd_left_len, fwd_right_len)
+        };
+        out.push(SuperkmerParts {
+            canonical_mint,
+            left,
+            right,
+            left_len: left_len as u8,
+            right_len: right_len as u8,
+            mint_is_rc,
+        });
+    }
+}
+
 /// Reusable superkmer extractor that avoids per-read allocations.
 /// Create once, call `process()` or `process_with_n()` for each read.
 pub struct SuperkmerExtractor {
     superkmers: Vec<Superkmer>,
+    parts: Vec<SuperkmerParts>,
     min_positions: Vec<(usize, usize, usize, usize)>,
     storage: Vec<u64>,
     frag_storage: Vec<u64>,
+    scores_buf: Vec<usize>,
+    deque: Vec<usize>,
     k: usize,
     l: usize,
     canonical: bool,
@@ -437,9 +602,12 @@ impl SuperkmerExtractor {
     fn new_inner_full(k: usize, l: usize, canonical: bool, mode: SplitMode) -> Self {
         SuperkmerExtractor {
             superkmers: Vec::new(),
+            parts: Vec::new(),
             min_positions: Vec::new(),
             storage: Vec::new(),
             frag_storage: Vec::new(),
+            scores_buf: Vec::new(),
+            deque: Vec::new(),
             k,
             l,
             canonical,
@@ -454,7 +622,7 @@ impl SuperkmerExtractor {
         let num_words = (seq.len() + 31) / 32;
         self.storage.resize(num_words, 0);
         crate::utils::bitpack_fragment_into(seq, &mut self.storage);
-        msp_minimizer_positions_into(&self.storage, seq.len(), self.k, self.l, 0, self.mode, &mut self.min_positions);
+        msp_syncmer_positions_into(&self.storage, seq.len(), self.k, self.l, 0, self.mode, &mut self.min_positions, &mut self.scores_buf, &mut self.deque);
         materialize_superkmers(&self.min_positions, self.k, self.l, self.canonical, &mut self.superkmers);
         &self.superkmers
     }
@@ -471,10 +639,41 @@ impl SuperkmerExtractor {
             let frag_words = (fragment.len() + 31) / 32;
             self.frag_storage.resize(frag_words, 0);
             crate::utils::bitpack_fragment_into(fragment, &mut self.frag_storage);
-            msp_minimizer_positions_into(&self.frag_storage, fragment.len(), self.k, self.l, *offset, self.mode, &mut self.min_positions);
+            msp_syncmer_positions_into(&self.frag_storage, fragment.len(), self.k, self.l, *offset, self.mode, &mut self.min_positions, &mut self.scores_buf, &mut self.deque);
         }
         materialize_superkmers(&self.min_positions, self.k, self.l, self.canonical, &mut self.superkmers);
         &self.superkmers
+    }
+
+    /// Process a sequence (no Ns) and return self-contained SuperkmerParts.
+    /// Each part contains (left, canonical_mint, right) — no external storage needed.
+    pub fn process_parts(&mut self, seq: &[u8]) -> &[SuperkmerParts] {
+        self.parts.clear();
+        self.min_positions.clear();
+        let num_words = (seq.len() + 31) / 32;
+        self.storage.resize(num_words, 0);
+        crate::utils::bitpack_fragment_into(seq, &mut self.storage);
+        msp_syncmer_positions_into(&self.storage, seq.len(), self.k, self.l, 0, self.mode, &mut self.min_positions, &mut self.scores_buf, &mut self.deque);
+        materialize_parts(&self.storage, &self.min_positions, self.k, self.l, self.canonical, &mut self.parts);
+        &self.parts
+    }
+
+    /// Process a sequence (may contain Ns) and return self-contained SuperkmerParts.
+    pub fn process_parts_with_n(&mut self, seq: &[u8]) -> &[SuperkmerParts] {
+        self.parts.clear();
+        self.min_positions.clear();
+        let num_words = (seq.len() + 31) / 32;
+        self.storage.resize(num_words, 0);
+        crate::utils::bitpack_fragment_into(seq, &mut self.storage);
+        let fragments = crate::utils::split_on_n(seq, self.k);
+        for (offset, fragment) in &fragments {
+            let frag_words = (fragment.len() + 31) / 32;
+            self.frag_storage.resize(frag_words, 0);
+            crate::utils::bitpack_fragment_into(fragment, &mut self.frag_storage);
+            msp_syncmer_positions_into(&self.frag_storage, fragment.len(), self.k, self.l, *offset, self.mode, &mut self.min_positions, &mut self.scores_buf, &mut self.deque);
+        }
+        materialize_parts(&self.storage, &self.min_positions, self.k, self.l, self.canonical, &mut self.parts);
+        &self.parts
     }
 
     /// Access the 2-bit packed representation of the last processed sequence.
