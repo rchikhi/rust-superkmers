@@ -182,6 +182,16 @@ impl PartialOrd for MinPos {
 /// All positions are absolute (offset already added).
 /// `scores` maps each l-mer integer value to its score (lower = better minimizer).
 fn msp_minimizer_positions_into(storage: &[u64], frag_len: usize, k: usize, l: usize, offset: usize, mode: SplitMode, min_positions: &mut Vec<(usize, usize, usize, usize)>) {
+    // Dispatch to const-generic version so the compiler monomorphizes and
+    // eliminates the mode branch from the hot loop.
+    match mode {
+        SplitMode::Classical => msp_minimizer_positions_inner::<true>(storage, frag_len, k, l, offset, mode, min_positions),
+        _ => msp_minimizer_positions_inner::<false>(storage, frag_len, k, l, offset, mode, min_positions),
+    }
+}
+
+#[inline(always)]
+fn msp_minimizer_positions_inner<const CLASSICAL: bool>(storage: &[u64], frag_len: usize, k: usize, l: usize, offset: usize, mode: SplitMode, min_positions: &mut Vec<(usize, usize, usize, usize)>) {
     let scores = match mode {
         SplitMode::Msp => msp_syncmer_scores(l),
         SplitMode::MspXor => mspxor_syncmer_scores(l),
@@ -214,7 +224,7 @@ fn msp_minimizer_positions_into(storage: &[u64], frag_len: usize, k: usize, l: u
             if i > min_pos.pos {
                 min_pos = find_min(i, i + k - l);
                 min_positions.push((i + offset, min_pos.pos + offset, min_pos.kmer, frag_end));
-            } else if if mode == SplitMode::Classical { end_pos < min_pos } else { end_pos.val < min_pos.val } {
+            } else if if CLASSICAL { end_pos < min_pos } else { end_pos.val < min_pos.val } {
                 min_pos = end_pos;
                 min_positions.push((i + offset, min_pos.pos + offset, min_pos.kmer, frag_end));
             }
