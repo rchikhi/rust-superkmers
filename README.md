@@ -8,14 +8,17 @@ Benchmarked on 150bp random sequences, k=31:
 
 * The Rust Nthash iterator from Luiz Irber runs at ~380 MB/s (it doesn't compute superkmers).
 * The lexicographic minimizer version of `rust-debruijn` MSP from 10XGenomics reaches ~285 MB/s.
-* From this crate:
-  * `iteratorsimdmini` (l=9), which uses the `simd-minimizers` crate for SIMD-accelerated canonical closed syncmer detection with a sticky MSP sliding window, runs at ~213 MB/s. Requires odd l.
-  * `iteratorsyncmersmsp` (l=8), which wraps the debruijn Scanner with syncmer scoring, runs at ~202 MB/s
-  * `iteratorsyncmers2` (l=8), which uses AVX2 for sequence bit-packing and reimplements the MSP sliding window with syncmer lookup tables, runs at ~179 MB/s. Produces identical output to `iteratorsyncmersmsp`.
-  * `iterator1`, which 100% matches the result of naive, runs at ~102 MB/s
-  * `naive`, which uses nthash but recomputes minimizers for each kmer, runs at ~32 MB/s
+* From this crate (sticky mode, context-dependent):
+  * `iteratorsimdmini` (l=9), SIMD-accelerated canonical closed syncmer detection, runs at ~239 MB/s. Requires odd l.
+  * `iteratorsyncmersmsp` (l=8), wraps the debruijn Scanner with syncmer scoring, runs at ~186 MB/s
+  * `iteratorsyncmers2` (l=8), AVX2 bit-packing with syncmer lookup tables, runs at ~172 MB/s. Produces identical output to `iteratorsyncmersmsp`.
+  * `iterator1`, which 100% matches the result of naive, runs at ~95 MB/s
+  * `naive`, which uses nthash but recomputes minimizers for each kmer, runs at ~28 MB/s
+* MspXor mode (context-independent, same k-mer always maps to same bucket):
+  * `iteratorsyncmers2:mspxor` (l=8) runs at ~186 MB/s — faster than sticky thanks to unique scores reducing window rescans.
+  * `iteratorsimdmini:mspxor` (l=9) runs at ~81 MB/s — slower due to linear scan in `find_best` (needs monotonic deque optimization).
 
-Note: `iteratorsimdmini` scales significantly better on longer sequences (~253 MB/s at 1Mb vs ~114 MB/s for `iteratorsyncmers2`).
+Note: `iteratorsimdmini` scales significantly better on longer sequences (~333 MB/s at 1Mb vs ~106 MB/s for `iteratorsyncmers2`). `iteratorsyncmers2:mspxor` also scales well (~138 MB/s at 1Mb, faster than sticky's 106 MB/s).
 
 ## Bucket Distribution (CHM13 human genome, k=31)
 
