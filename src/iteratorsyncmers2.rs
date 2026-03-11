@@ -95,7 +95,8 @@ fn generate_msp_syncmer_scores<const K: usize>() -> Vec<usize> {
     let mut scores = vec![0usize; 1 << (2 * K)];
     for fwd in 0..(1 << (2 * K)) {
         let (canon_val, _) = canon_table[fwd];
-        scores[fwd] = (base[fwd] << 32) | canon_val as usize;
+        // Use canonical syncmer priority so fwd and rc(fwd) get the same score
+        scores[fwd] = (base[canon_val as usize] << 32) | canon_val as usize;
     }
     scores
 }
@@ -111,7 +112,8 @@ fn generate_mspxor_syncmer_scores<const K: usize>() -> Vec<usize> {
     let mut scores = vec![0usize; 1 << (2 * K)];
     for fwd in 0..(1 << (2 * K)) {
         let (canon_val, _) = canon_table[fwd];
-        scores[fwd] = (base[fwd] << 32) | (canon_val as usize ^ XOR_CONSTANT);
+        // Use canonical syncmer priority so fwd and rc(fwd) get the same score
+        scores[fwd] = (base[canon_val as usize] << 32) | (canon_val as usize ^ XOR_CONSTANT);
     }
     scores
 }
