@@ -26,7 +26,7 @@ static ref MSPXOR_SYNCMER_SCORES_8: Vec<usize> = generate_mspxor_syncmer_scores:
 static ref MSPXOR_SYNCMER_SCORES_9: Vec<usize> = generate_mspxor_syncmer_scores::<9>();
 }
 
-fn syncmer_scores(l: usize) -> &'static [usize] {
+pub(crate) fn syncmer_scores(l: usize) -> &'static [usize] {
     match l {
         8 => &SYNCMER_SCORES_8[..],
         9 => &SYNCMER_SCORES_9[..],
@@ -34,7 +34,7 @@ fn syncmer_scores(l: usize) -> &'static [usize] {
     }
 }
 
-fn msp_syncmer_scores(l: usize) -> &'static [usize] {
+pub(crate) fn msp_syncmer_scores(l: usize) -> &'static [usize] {
     match l {
         8 => &MSP_SYNCMER_SCORES_8[..],
         9 => &MSP_SYNCMER_SCORES_9[..],
@@ -42,7 +42,7 @@ fn msp_syncmer_scores(l: usize) -> &'static [usize] {
     }
 }
 
-fn mspxor_syncmer_scores(l: usize) -> &'static [usize] {
+pub fn mspxor_syncmer_scores(l: usize) -> &'static [usize] {
     match l {
         8 => &MSPXOR_SYNCMER_SCORES_8[..],
         9 => &MSPXOR_SYNCMER_SCORES_9[..],
@@ -50,7 +50,7 @@ fn mspxor_syncmer_scores(l: usize) -> &'static [usize] {
     }
 }
 
-fn canonical_table(l: usize) -> &'static [(u32, bool)] {
+pub(crate) fn canonical_table(l: usize) -> &'static [(u32, bool)] {
     match l {
         8 => &*crate::CANONICAL_8,
         9 => &*crate::CANONICAL_9,
@@ -120,10 +120,19 @@ fn generate_mspxor_syncmer_scores<const K: usize>() -> Vec<usize> {
 
 use crate::utils::bitpack_fragment;
 
+/// Extract a single base (2 bits) from bitpacked storage at the given position.
+#[inline(always)]
+fn get_base(data: &[u64], pos: usize) -> usize {
+    let word = pos / 32;
+    let bit_offset = (31 - (pos % 32)) * 2;
+    ((data[word] >> bit_offset) & 3) as usize
+}
+
 /// Extract an l-mer value from the packed storage, MSB-first encoding
 /// (matching debruijn's Kmer8::to_u64() convention).
 /// Each u64 in `data` holds 32 bases, with base 0 at bits 63-62 (MSB).
-fn get_kmer_value(data: &[u64], base_pos: usize, l: usize) -> usize {
+#[inline(always)]
+pub fn get_kmer_value(data: &[u64], base_pos: usize, l: usize) -> usize {
     let word = base_pos / 32;
     let offset = base_pos % 32; // base offset within the word
     let bit_len = l * 2;
@@ -220,8 +229,16 @@ fn msp_minimizer_positions_inner<const CLASSICAL: bool>(storage: &[u64], frag_le
         let mut min_pos = find_min(0, k - l);
         min_positions.push((offset, min_pos.pos + offset, min_pos.kmer, frag_end));
 
+        // Rolling l-mer: maintain the entering l-mer incrementally.
+        // Each iteration, shift left by 2 bits, OR in the new rightmost base, mask to l*2 bits.
+        let mask = (1usize << (l * 2)) - 1;
+        let mut rolling_kmer = get_kmer_value(storage, k - l, l);
+
         for i in 1..(frag_len - k + 1) {
-            let end_pos = mp(i + k - l);
+            let new_base = get_base(storage, i + k - 1);
+            rolling_kmer = ((rolling_kmer << 2) | new_base) & mask;
+            let end_val = scores[rolling_kmer];
+            let end_pos = MinPos { val: end_val, pos: i + k - l, kmer: rolling_kmer };
 
             if i > min_pos.pos {
                 min_pos = find_min(i, i + k - l);
