@@ -39,10 +39,71 @@ fn superkmers_bench(c: &mut Criterion) {
 	|b: &mut Bencher, i: &String| {
 		b.iter(|| {
             let iter = rust_superkmers::iteratorsyncmers2::SuperkmersIterator::new(i.as_bytes(), k, m);
-            let _res = iter.1.into_iter().collect::<Vec<rust_superkmers::Superkmer>>(); 
+            let _res = iter.into_iter().collect::<Vec<rust_superkmers::Superkmer>>();
 			black_box(_res);
 		})});
 
+
+    group.bench_with_input(BenchmarkId::new("syncmers2_classical", seq_len), &seq,
+	|b: &mut Bencher, i: &String| {
+		b.iter(|| {
+            let iter = rust_superkmers::iteratorsyncmers2::SuperkmersIterator::classical(i.as_bytes(), k, m);
+            let _res = iter.into_iter().collect::<Vec<rust_superkmers::Superkmer>>();
+			black_box(_res);
+		})});
+
+    group.bench_with_input(BenchmarkId::new("syncmers2_msp", seq_len), &seq,
+	|b: &mut Bencher, i: &String| {
+		b.iter(|| {
+            let iter = rust_superkmers::iteratorsyncmers2::SuperkmersIterator::msp(i.as_bytes(), k, m);
+            let _res = iter.into_iter().collect::<Vec<rust_superkmers::Superkmer>>();
+			black_box(_res);
+		})});
+
+    group.bench_with_input(BenchmarkId::new("syncmers2_mspxor", seq_len), &seq,
+	|b: &mut Bencher, i: &String| {
+		b.iter(|| {
+            let iter = rust_superkmers::iteratorsyncmers2::SuperkmersIterator::mspxor(i.as_bytes(), k, m);
+            let _res = iter.into_iter().collect::<Vec<rust_superkmers::Superkmer>>();
+			black_box(_res);
+		})});
+
+    #[cfg(feature = "simd-mini")]
+    {
+    let m_simd = 9; // simdmini requires odd l
+
+    group.bench_with_input(BenchmarkId::new("simdmini_sticky", seq_len), &seq,
+	|b: &mut Bencher, i: &String| {
+		b.iter(|| {
+            let iter = rust_superkmers::iteratorsimdmini::SuperkmersIterator::new(i.as_bytes(), k, m_simd);
+            let _res = iter.into_iter().collect::<Vec<rust_superkmers::Superkmer>>();
+			black_box(_res);
+		})});
+
+    group.bench_with_input(BenchmarkId::new("simdmini_classical", seq_len), &seq,
+	|b: &mut Bencher, i: &String| {
+		b.iter(|| {
+            let iter = rust_superkmers::iteratorsimdmini::SuperkmersIterator::classical(i.as_bytes(), k, m_simd);
+            let _res = iter.into_iter().collect::<Vec<rust_superkmers::Superkmer>>();
+			black_box(_res);
+		})});
+
+    group.bench_with_input(BenchmarkId::new("simdmini_msp", seq_len), &seq,
+	|b: &mut Bencher, i: &String| {
+		b.iter(|| {
+            let iter = rust_superkmers::iteratorsimdmini::SuperkmersIterator::msp(i.as_bytes(), k, m_simd);
+            let _res = iter.into_iter().collect::<Vec<rust_superkmers::Superkmer>>();
+			black_box(_res);
+		})});
+
+    group.bench_with_input(BenchmarkId::new("simdmini_mspxor", seq_len), &seq,
+	|b: &mut Bencher, i: &String| {
+		b.iter(|| {
+            let iter = rust_superkmers::iteratorsimdmini::SuperkmersIterator::mspxor(i.as_bytes(), k, m_simd);
+            let _res = iter.into_iter().collect::<Vec<rust_superkmers::Superkmer>>();
+			black_box(_res);
+		})});
+    }
 
     group.bench_with_input(BenchmarkId::new("superkmers_iteratorsyncmersmsp", seq_len), &seq,
 	|b: &mut Bencher, i: &String| {

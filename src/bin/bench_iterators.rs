@@ -50,6 +50,27 @@ fn main() {
             std::hint::black_box(v);
         });
 
+        bench("syncmers2:classical", &seq, iters, |s| {
+            let iter =
+                rust_superkmers::iteratorsyncmers2::SuperkmersIterator::classical(s, k, 8);
+            let v: Vec<_> = iter.collect();
+            std::hint::black_box(v);
+        });
+
+        bench("syncmers2:msp", &seq, iters, |s| {
+            let iter =
+                rust_superkmers::iteratorsyncmers2::SuperkmersIterator::msp(s, k, 8);
+            let v: Vec<_> = iter.collect();
+            std::hint::black_box(v);
+        });
+
+        bench("syncmers2:mspxor", &seq, iters, |s| {
+            let iter =
+                rust_superkmers::iteratorsyncmers2::SuperkmersIterator::mspxor(s, k, 8);
+            let v: Vec<_> = iter.collect();
+            std::hint::black_box(v);
+        });
+
         bench("kmc2 (l=8)", &seq, iters, |s| {
             let (_, iter) =
                 rust_superkmers::iteratorkmc2::SuperkmersIterator::new(s, k, 8);
@@ -71,12 +92,35 @@ fn main() {
         });
 
         #[cfg(feature = "simd-mini")]
+        {
         bench("simdmini (l=9)", &seq, iters, |s| {
             let iter =
                 rust_superkmers::iteratorsimdmini::SuperkmersIterator::new(s, k, 9);
             let v: Vec<_> = iter.collect();
             std::hint::black_box(v);
         });
+
+        bench("simdmini:classical", &seq, iters, |s| {
+            let iter =
+                rust_superkmers::iteratorsimdmini::SuperkmersIterator::classical(s, k, 9);
+            let v: Vec<_> = iter.collect();
+            std::hint::black_box(v);
+        });
+
+        bench("simdmini:msp", &seq, iters, |s| {
+            let iter =
+                rust_superkmers::iteratorsimdmini::SuperkmersIterator::msp(s, k, 9);
+            let v: Vec<_> = iter.collect();
+            std::hint::black_box(v);
+        });
+
+        bench("simdmini:mspxor", &seq, iters, |s| {
+            let iter =
+                rust_superkmers::iteratorsimdmini::SuperkmersIterator::mspxor(s, k, 9);
+            let v: Vec<_> = iter.collect();
+            std::hint::black_box(v);
+        });
+        }
 
         // Extractor benchmarks (reusable buffers, amortized across reads)
         {
@@ -87,10 +131,27 @@ fn main() {
             });
         }
 
+        {
+            let mut ext2 = rust_superkmers::iteratorsyncmers2::SuperkmerExtractor::mspxor(k, 8);
+            bench("syncmers2-ext:mspxor", &seq, iters, |s| {
+                let sks = ext2.process(s);
+                std::hint::black_box(sks);
+            });
+        }
+
         #[cfg(feature = "simd-mini")]
         {
             let mut ext_simd = rust_superkmers::iteratorsimdmini::SuperkmerExtractor::new(k, 9);
             bench("simdmini-ext (l=9)", &seq, iters, |s| {
+                let sks = ext_simd.process(s);
+                std::hint::black_box(sks);
+            });
+        }
+
+        #[cfg(feature = "simd-mini")]
+        {
+            let mut ext_simd = rust_superkmers::iteratorsimdmini::SuperkmerExtractor::mspxor(k, 9);
+            bench("simdmini-ext:mspxor", &seq, iters, |s| {
                 let sks = ext_simd.process(s);
                 std::hint::black_box(sks);
             });
