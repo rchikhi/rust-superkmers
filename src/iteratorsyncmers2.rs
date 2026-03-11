@@ -12,7 +12,7 @@
 //! let iter = rust_superkmers::iteratorsyncmers2::SuperkmersIterator::non_canonical(seq, 21, 8);
 //! for sk in iter { /* forward-strand mint */ }
 //! ```
-use crate::{Superkmer, SuperkmerParts, SplitMode};
+use crate::{Superkmer, SplitMode};
 use lazy_static::lazy_static;
 
 const S: usize = 2; //syncmer's s parameter
@@ -496,75 +496,12 @@ fn materialize_superkmers(min_positions: &[(usize, usize, usize, usize)], k: usi
     }
 }
 
-/// Reverse-complement a right-aligned packed sequence of `len` bases in a u64.
-/// A=0↔T=3, C=1↔G=2. Result is right-aligned.
-#[inline]
-fn rc_packed(val: u64, len: usize) -> u64 {
-    let mut rc = 0u64;
-    let mut v = val;
-    for _ in 0..len {
-        rc = (rc << 2) | (3 - (v & 3));
-        v >>= 2;
-    }
-    rc
-}
 
-/// Convert min_positions to self-contained SuperkmerParts (left + canonical_mint + right).
-///
-/// When `canonical` is true and `mint_is_rc`, parts are pre-oriented to canonical orientation:
-/// left and right are swapped and reverse-complemented so the consumer always sees
-/// (left_context, canonical_minimizer, right_context) in the canonical strand.
-///
-/// Values are right-aligned (LSB) in u64. To MSB-align for byte-oriented output:
-/// `word << (64 - len * 2)` then `.to_be_bytes()[..ceil(len * 2, 8)]`.
-fn materialize_parts(storage: &[u64], min_positions: &[(usize, usize, usize, usize)], k: usize, l: usize, canonical: bool, out: &mut Vec<SuperkmerParts>) {
-    let canon_table = if canonical { Some(canonical_table(l)) } else { None };
-    for p in 0..min_positions.len() {
-        let (start_pos, min_abs_pos, min_kmer, frag_end) = min_positions[p];
-        let size = if p < min_positions.len() - 1 {
-            let (next_pos, _, _, next_frag_end) = min_positions[p + 1];
-            if next_frag_end == frag_end {
-                next_pos + k - 1 - start_pos
-            } else {
-                frag_end - start_pos
-            }
-        } else {
-            frag_end - start_pos
-        };
-        let mpos = min_abs_pos - start_pos;
-        let (canonical_mint, mint_is_rc) = if let Some(table) = canon_table {
-            table[min_kmer]
-        } else {
-            (min_kmer as u32, false)
-        };
-        let fwd_left_len = mpos;
-        let fwd_right_len = size - mpos - l;
-        let fwd_left = if fwd_left_len > 0 { get_kmer_value(storage, start_pos, fwd_left_len) as u64 } else { 0 };
-        let fwd_right = if fwd_right_len > 0 { get_kmer_value(storage, min_abs_pos + l, fwd_right_len) as u64 } else { 0 };
-
-        // Pre-orient: when mint_is_rc, the canonical strand is the RC of the forward strand.
-        // RC reverses the whole superkmer, so left↔right swap and each gets RC'd.
-        let (left, right, left_len, right_len) = if mint_is_rc {
-            (rc_packed(fwd_right, fwd_right_len), rc_packed(fwd_left, fwd_left_len), fwd_right_len, fwd_left_len)
-        } else {
-            (fwd_left, fwd_right, fwd_left_len, fwd_right_len)
-        };
-        out.push(SuperkmerParts {
-            canonical_mint,
-            left,
-            right,
-            left_len: left_len as u8,
-            right_len: right_len as u8,
-            mint_is_rc,
-        });
-    }
-}
 
 /// Reusable superkmer extractor that avoids per-read allocations.
 /// Create once, call `process()` or `process_with_n()` for each read.
 pub struct SuperkmerExtractor {
     superkmers: Vec<Superkmer>,
-    parts: Vec<SuperkmerParts>,
     min_positions: Vec<(usize, usize, usize, usize)>,
     storage: Vec<u64>,
     frag_storage: Vec<u64>,
@@ -602,7 +539,6 @@ impl SuperkmerExtractor {
     fn new_inner_full(k: usize, l: usize, canonical: bool, mode: SplitMode) -> Self {
         SuperkmerExtractor {
             superkmers: Vec::new(),
-            parts: Vec::new(),
             min_positions: Vec::new(),
             storage: Vec::new(),
             frag_storage: Vec::new(),
@@ -645,36 +581,6 @@ impl SuperkmerExtractor {
         &self.superkmers
     }
 
-    /// Process a sequence (no Ns) and return self-contained SuperkmerParts.
-    /// Each part contains (left, canonical_mint, right) — no external storage needed.
-    pub fn process_parts(&mut self, seq: &[u8]) -> &[SuperkmerParts] {
-        self.parts.clear();
-        self.min_positions.clear();
-        let num_words = (seq.len() + 31) / 32;
-        self.storage.resize(num_words, 0);
-        crate::utils::bitpack_fragment_into(seq, &mut self.storage);
-        msp_syncmer_positions_into(&self.storage, seq.len(), self.k, self.l, 0, self.mode, &mut self.min_positions, &mut self.scores_buf, &mut self.deque);
-        materialize_parts(&self.storage, &self.min_positions, self.k, self.l, self.canonical, &mut self.parts);
-        &self.parts
-    }
-
-    /// Process a sequence (may contain Ns) and return self-contained SuperkmerParts.
-    pub fn process_parts_with_n(&mut self, seq: &[u8]) -> &[SuperkmerParts] {
-        self.parts.clear();
-        self.min_positions.clear();
-        let num_words = (seq.len() + 31) / 32;
-        self.storage.resize(num_words, 0);
-        crate::utils::bitpack_fragment_into(seq, &mut self.storage);
-        let fragments = crate::utils::split_on_n(seq, self.k);
-        for (offset, fragment) in &fragments {
-            let frag_words = (fragment.len() + 31) / 32;
-            self.frag_storage.resize(frag_words, 0);
-            crate::utils::bitpack_fragment_into(fragment, &mut self.frag_storage);
-            msp_syncmer_positions_into(&self.frag_storage, fragment.len(), self.k, self.l, *offset, self.mode, &mut self.min_positions, &mut self.scores_buf, &mut self.deque);
-        }
-        materialize_parts(&self.storage, &self.min_positions, self.k, self.l, self.canonical, &mut self.parts);
-        &self.parts
-    }
 
     /// Access the 2-bit packed representation of the last processed sequence.
     pub fn storage(&self) -> &[u64] {

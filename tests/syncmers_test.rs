@@ -1,6 +1,6 @@
 use std::fs;
 use debruijn::dna_string::DnaString;
-use rust_superkmers::{Superkmer, SuperkmerParts};
+use rust_superkmers::Superkmer;
 use rust_superkmers::utils::split_on_n;
 
 fn random_dna(len: usize, seed: u64) -> Vec<u8> {
@@ -1154,58 +1154,4 @@ mod canonical_toggle {
         }
     }
 
-    /// Verify SuperkmerParts: same mint, correct lengths, pre-oriented when mint_is_rc.
-    /// Reconstructs the full canonical superkmer from parts and compares to forward-strand + manual RC.
-    #[test]
-    fn test_superkmer_parts_consistency() {
-        use rust_superkmers::iteratorsyncmers2::{SuperkmerExtractor, get_kmer_value};
-
-        fn rc_packed(val: u64, len: usize) -> u64 {
-            let mut rc = 0u64;
-            let mut v = val;
-            for _ in 0..len {
-                rc = (rc << 2) | (3 - (v & 3));
-                v >>= 2;
-            }
-            rc
-        }
-
-        let k = 31;
-        let l = 8;
-        for seed in 0..20 {
-            let seq = random_dna(150, seed * 41 + 7);
-            let mut ext = SuperkmerExtractor::mspxor(k, l);
-
-            let sks = ext.process(&seq).to_vec();
-            let parts = ext.process_parts(&seq).to_vec();
-
-            assert_eq!(sks.len(), parts.len(), "seed={seed}: count mismatch");
-            let storage = ext.storage();
-
-            for (i, (sk, part)) in sks.iter().zip(parts.iter()).enumerate() {
-                assert_eq!(sk.mint, part.canonical_mint, "seed={seed} sk={i}: mint mismatch");
-                assert_eq!(sk.mint_is_rc, part.mint_is_rc, "seed={seed} sk={i}: mint_is_rc mismatch");
-
-                // Extract forward-strand left/right from storage
-                let fwd_left_len = sk.mpos as usize;
-                let fwd_right_len = sk.size as usize - sk.mpos as usize - l;
-                let fwd_left = if fwd_left_len > 0 { get_kmer_value(storage, sk.start, fwd_left_len) as u64 } else { 0 };
-                let fwd_right = if fwd_right_len > 0 { get_kmer_value(storage, sk.start + sk.mpos as usize + l, fwd_right_len) as u64 } else { 0 };
-
-                if !sk.mint_is_rc {
-                    // Not RC'd: parts should match forward strand directly
-                    assert_eq!(fwd_left_len as u8, part.left_len, "seed={seed} sk={i}: left_len");
-                    assert_eq!(fwd_right_len as u8, part.right_len, "seed={seed} sk={i}: right_len");
-                    assert_eq!(fwd_left, part.left, "seed={seed} sk={i}: left (fwd)");
-                    assert_eq!(fwd_right, part.right, "seed={seed} sk={i}: right (fwd)");
-                } else {
-                    // RC'd: parts should be swapped and RC'd
-                    assert_eq!(fwd_right_len as u8, part.left_len, "seed={seed} sk={i}: left_len (rc swap)");
-                    assert_eq!(fwd_left_len as u8, part.right_len, "seed={seed} sk={i}: right_len (rc swap)");
-                    assert_eq!(rc_packed(fwd_right, fwd_right_len), part.left, "seed={seed} sk={i}: left = RC(fwd_right)");
-                    assert_eq!(rc_packed(fwd_left, fwd_left_len), part.right, "seed={seed} sk={i}: right = RC(fwd_left)");
-                }
-            }
-        }
-    }
 }

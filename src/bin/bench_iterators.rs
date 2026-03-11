@@ -191,14 +191,6 @@ fn main() {
             });
         }
 
-        {
-            let mut ext2 = rust_superkmers::iteratorsyncmers2::SuperkmerExtractor::mspxor(k, 8);
-            bench("syncmers2-ext:mspxor parts", &seq, iters, |s| {
-                let parts = ext2.process_parts(s);
-                std::hint::black_box(parts);
-            });
-        }
-
         #[cfg(feature = "simd-mini")]
         {
             let mut ext_simd = rust_superkmers::iteratorsimdmini::SuperkmerExtractor::new(k, 9);

@@ -86,36 +86,6 @@ impl Ord for Superkmer {
     }
 }
 
-/// Self-contained superkmer decomposed into left context + canonical minimizer + right context.
-///
-/// For k=31 l=8, both `left` and `right` are ≤ 23 bases (46 bits), always fitting in a u64.
-/// No external packed storage reference needed — the consumer can route by `canonical_mint`
-/// and reconstruct k-mers from the parts.
-///
-/// **Pre-oriented**: when `mint_is_rc` is true, left and right have been swapped and
-/// reverse-complemented so they always represent the canonical strand. The consumer
-/// sees `left + canonical_mint + right` in canonical orientation regardless of the
-/// original strand.
-///
-/// **Right-aligned (LSB)**: values are packed MSB-first but right-aligned in u64.
-/// To MSB-align for byte-oriented output: `word << (64 - len as u32 * 2)`.
-///
-/// # Fields
-/// - `canonical_mint` — canonical l-mer value (2-bit packed, MSB-first). Bucket key.
-/// - `left` — bases before the minimizer in canonical orientation, right-aligned in u64.
-/// - `right` — bases after the minimizer in canonical orientation, right-aligned in u64.
-/// - `left_len` — number of bases in `left` (0..=k-l).
-/// - `right_len` — number of bases in `right` (0..=k-l).
-/// - `mint_is_rc` — `true` if the canonical minimizer is the RC of the forward-strand l-mer.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct SuperkmerParts {
-    pub canonical_mint: u32,
-    pub left: u64,
-    pub right: u64,
-    pub left_len: u8,
-    pub right_len: u8,
-    pub mint_is_rc: bool,
-}
 
 
 
