@@ -143,21 +143,22 @@ fn superkmers_from_fragment(
         let mut lo = 0usize; // first syncmer index >= window left
         let mut hi = 0usize; // first syncmer index > window right
 
-        let find_best = |lo: usize, hi: usize| -> u32 {
-            if lo >= hi { return u32::MAX; }
+        // Rescan the window [lo..hi) to find the best syncmer.
+        let find_best = |lo: usize, hi: usize| -> (u32, usize) {
+            if lo >= hi { return (u32::MAX, usize::MAX); }
             if mode == SplitMode::Classical {
                 // Rightmost non-demoted, fallback to rightmost demoted
                 if !is_demoted(syncmer_pos[hi - 1]) {
-                    return syncmer_pos[hi - 1];
+                    return (syncmer_pos[hi - 1], 0);
                 }
                 let mut j = hi - 1;
                 while j > lo {
                     j -= 1;
-                    if !is_demoted(syncmer_pos[j]) { return syncmer_pos[j]; }
+                    if !is_demoted(syncmer_pos[j]) { return (syncmer_pos[j], 0); }
                 }
-                syncmer_pos[hi - 1]
+                (syncmer_pos[hi - 1], 0)
             } else {
-                // Msp/MspXor: lowest precomputed score
+                // Msp/MspXor: rightmost with lowest precomputed score
                 let mut best_pos = u32::MAX;
                 let mut best_score = usize::MAX;
                 for j in lo..hi {
@@ -166,7 +167,7 @@ fn superkmers_from_fragment(
                         best_pos = syncmer_pos[j];
                     }
                 }
-                best_pos
+                (best_pos, best_score)
             }
         };
 
@@ -174,27 +175,71 @@ fn superkmers_from_fragment(
         while hi < syncmer_pos.len() && (syncmer_pos[hi] as usize) <= max_lmer_offset {
             hi += 1;
         }
-        let mut curr_min = find_best(lo, hi);
+        let (mut curr_min, mut curr_score) = find_best(lo, hi);
         let mut sk_start = 0usize;
+        // Track which syncmer index curr_min corresponds to, for Classical falloff detection
+        let mut prev_hi = hi;
 
         for i in 1..num_kmers {
+            let old_lo = lo;
             // Advance lo: remove syncmers that fell off left edge
             while lo < syncmer_pos.len() && (syncmer_pos[lo] as usize) < i {
                 lo += 1;
             }
+            let old_hi = hi;
             // Advance hi: add syncmers entering from right edge
             while hi < syncmer_pos.len() && (syncmer_pos[hi] as usize) <= i + max_lmer_offset {
                 hi += 1;
             }
 
-            let new_min = find_best(lo, hi);
+            // Did the current minimum fall off the left edge?
+            let fell_off = curr_min != u32::MAX && (curr_min as usize) < i;
 
-            if new_min != curr_min {
-                if curr_min != u32::MAX {
-                    emit(sk_start, i - 1, curr_min, results);
+            if fell_off {
+                // Rescan to find new best
+                let (new_min, new_score) = find_best(lo, hi);
+                if new_min != curr_min {
+                    if curr_min != u32::MAX {
+                        emit(sk_start, i - 1, curr_min, results);
+                    }
+                    sk_start = i;
                 }
-                sk_start = i;
                 curr_min = new_min;
+                curr_score = new_score;
+            } else if mode == SplitMode::Classical {
+                // Classical: rightmost syncmer wins. Check if a new syncmer entered.
+                if hi > old_hi {
+                    // New syncmer(s) entered from right — rightmost is at hi-1
+                    let new_pos = syncmer_pos[hi - 1];
+                    let new_demoted = is_demoted(new_pos);
+                    let curr_demoted = curr_min != u32::MAX && is_demoted(curr_min);
+                    // New non-demoted beats current, or new rightmost replaces current if same demotion status
+                    if (!new_demoted && curr_demoted) || (!new_demoted || curr_demoted) {
+                        if new_pos != curr_min {
+                            if curr_min != u32::MAX {
+                                emit(sk_start, i - 1, curr_min, results);
+                            }
+                            sk_start = i;
+                            curr_min = new_pos;
+                        }
+                    }
+                }
+            } else {
+                // Msp/MspXor: check new syncmers entering from right
+                for j in old_hi..hi {
+                    let new_score_j = syncmer_scores[j];
+                    if new_score_j <= curr_score {
+                        let new_pos = syncmer_pos[j];
+                        if new_pos != curr_min {
+                            if curr_min != u32::MAX {
+                                emit(sk_start, i - 1, curr_min, results);
+                            }
+                            sk_start = i;
+                            curr_min = new_pos;
+                            curr_score = new_score_j;
+                        }
+                    }
+                }
             }
         }
         // Flush final superkmer
