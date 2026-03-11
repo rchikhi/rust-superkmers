@@ -177,73 +177,107 @@ fn superkmers_from_fragment(
         }
         let (mut curr_min, mut curr_score) = find_best(lo, hi);
         let mut sk_start = 0usize;
-        // Track which syncmer index curr_min corresponds to, for Classical falloff detection
-        let mut prev_hi = hi;
 
-        for i in 1..num_kmers {
-            let old_lo = lo;
-            // Advance lo: remove syncmers that fell off left edge
-            while lo < syncmer_pos.len() && (syncmer_pos[lo] as usize) < i {
-                lo += 1;
-            }
-            let old_hi = hi;
-            // Advance hi: add syncmers entering from right edge
-            while hi < syncmer_pos.len() && (syncmer_pos[hi] as usize) <= i + max_lmer_offset {
-                hi += 1;
-            }
-
-            // Did the current minimum fall off the left edge?
-            let fell_off = curr_min != u32::MAX && (curr_min as usize) < i;
-
-            if fell_off {
-                // Rescan to find new best
-                let (new_min, new_score) = find_best(lo, hi);
-                if new_min != curr_min {
-                    if curr_min != u32::MAX {
-                        emit(sk_start, i - 1, curr_min, results);
-                    }
-                    sk_start = i;
+        // Event-driven loop: jump between syncmer entries and minimizer falloffs.
+        // The current minimum can only change when:
+        //   1. It falls off the left edge at k-mer index (curr_min + 1)
+        //   2. A new syncmer enters the window at k-mer index (syncmer_pos[hi] - max_lmer_offset)
+        let mut i = 1usize;
+        while i < num_kmers {
+            if curr_min == u32::MAX {
+                // No minimizer — jump to when next syncmer enters
+                if hi >= syncmer_pos.len() { break; }
+                let next_i = (syncmer_pos[hi] as usize).saturating_sub(max_lmer_offset).max(i);
+                // Advance pointers
+                while lo < syncmer_pos.len() && (syncmer_pos[lo] as usize) < next_i {
+                    lo += 1;
                 }
+                while hi < syncmer_pos.len() && (syncmer_pos[hi] as usize) <= next_i + max_lmer_offset {
+                    hi += 1;
+                }
+                let (new_min, new_score) = find_best(lo, hi);
+                sk_start = next_i;
                 curr_min = new_min;
                 curr_score = new_score;
-            } else if mode == SplitMode::Classical {
-                // Classical: rightmost syncmer wins. Check if a new syncmer entered.
-                if hi > old_hi {
-                    // New syncmer(s) entered from right — rightmost is at hi-1
-                    let new_pos = syncmer_pos[hi - 1];
-                    let new_demoted = is_demoted(new_pos);
-                    let curr_demoted = curr_min != u32::MAX && is_demoted(curr_min);
-                    // New non-demoted beats current, or new rightmost replaces current if same demotion status
-                    if (!new_demoted && curr_demoted) || (!new_demoted || curr_demoted) {
-                        if new_pos != curr_min {
-                            if curr_min != u32::MAX {
-                                emit(sk_start, i - 1, curr_min, results);
-                            }
-                            sk_start = i;
-                            curr_min = new_pos;
-                        }
-                    }
-                }
+                i = next_i + 1;
+                continue;
+            }
+
+            let falloff_at = curr_min as usize + 1;
+            let next_entry_at = if hi < syncmer_pos.len() {
+                (syncmer_pos[hi] as usize).saturating_sub(max_lmer_offset).max(1)
             } else {
-                // Msp/MspXor: check new syncmers entering from right
-                for j in old_hi..hi {
-                    let new_score_j = syncmer_scores[j];
-                    if new_score_j <= curr_score {
-                        let new_pos = syncmer_pos[j];
-                        if new_pos != curr_min {
-                            if curr_min != u32::MAX {
-                                emit(sk_start, i - 1, curr_min, results);
+                num_kmers
+            };
+
+            if next_entry_at < falloff_at && next_entry_at < num_kmers {
+                // A syncmer enters before the current minimum falls off.
+                // Process each entering syncmer.
+                let entry_i = next_entry_at;
+                // Advance lo (shouldn't change since curr_min hasn't fallen off yet)
+                while lo < syncmer_pos.len() && (syncmer_pos[lo] as usize) < entry_i {
+                    lo += 1;
+                }
+                let old_hi = hi;
+                while hi < syncmer_pos.len() && (syncmer_pos[hi] as usize) <= entry_i + max_lmer_offset {
+                    hi += 1;
+                }
+
+                if mode == SplitMode::Classical {
+                    if hi > old_hi {
+                        let new_pos = syncmer_pos[hi - 1];
+                        let new_demoted = is_demoted(new_pos);
+                        let curr_demoted = is_demoted(curr_min);
+                        if (!new_demoted && curr_demoted) || (!new_demoted || curr_demoted) {
+                            if new_pos != curr_min {
+                                emit(sk_start, entry_i - 1, curr_min, results);
+                                sk_start = entry_i;
+                                curr_min = new_pos;
                             }
-                            sk_start = i;
-                            curr_min = new_pos;
-                            curr_score = new_score_j;
+                        }
+                    }
+                } else {
+                    for j in old_hi..hi {
+                        let new_score_j = syncmer_scores[j];
+                        if new_score_j <= curr_score {
+                            let new_pos = syncmer_pos[j];
+                            // The syncmer at j enters the window at k-mer index (pos - max_lmer_offset)
+                            let enters_at = (syncmer_pos[j] as usize).saturating_sub(max_lmer_offset).max(1);
+                            if new_pos != curr_min {
+                                emit(sk_start, enters_at - 1, curr_min, results);
+                                sk_start = enters_at;
+                                curr_min = new_pos;
+                                curr_score = new_score_j;
+                            }
                         }
                     }
                 }
+                i = entry_i + 1;
+            } else {
+                // Current minimum falls off first (or no more entries).
+                let emit_end = (falloff_at - 1).min(num_kmers - 1);
+                emit(sk_start, emit_end, curr_min, results);
+
+                i = falloff_at;
+                if i >= num_kmers { break; }
+
+                // Advance pointers
+                while lo < syncmer_pos.len() && (syncmer_pos[lo] as usize) < i {
+                    lo += 1;
+                }
+                while hi < syncmer_pos.len() && (syncmer_pos[hi] as usize) <= i + max_lmer_offset {
+                    hi += 1;
+                }
+
+                let (new_min, new_score) = find_best(lo, hi);
+                sk_start = i;
+                curr_min = new_min;
+                curr_score = new_score;
+                i += 1;
             }
         }
         // Flush final superkmer
-        if curr_min != u32::MAX {
+        if curr_min != u32::MAX && sk_start < num_kmers {
             emit(sk_start, num_kmers - 1, curr_min, results);
         }
     } else {
