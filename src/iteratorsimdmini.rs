@@ -161,7 +161,7 @@ fn superkmers_from_fragment(
                 let mut best_pos = u32::MAX;
                 let mut best_score = usize::MAX;
                 for j in lo..hi {
-                    if syncmer_scores[j] < best_score {
+                    if syncmer_scores[j] <= best_score {
                         best_score = syncmer_scores[j];
                         best_pos = syncmer_pos[j];
                     }
