@@ -129,6 +129,17 @@ fn superkmers_from_fragment(
 
         const XOR_CONSTANT: usize = 0xACE5_ACE5;
 
+        // Precompute scores for all syncmer positions (avoids per-k-mer canonical_lmer_index calls)
+        let syncmer_scores: Vec<usize> = if mode == SplitMode::Classical {
+            Vec::new() // Classical doesn't use scores
+        } else {
+            syncmer_pos.iter().map(|&p| {
+                let (canon, _) = canonical_lmer_index(ascii_slice, p as usize, l);
+                let tiebreak = if mode == SplitMode::MspXor { canon ^ XOR_CONSTANT } else { canon };
+                if is_demoted(p) { (1usize << 32) | tiebreak } else { tiebreak }
+            }).collect()
+        };
+
         let mut lo = 0usize; // first syncmer index >= window left
         let mut hi = 0usize; // first syncmer index > window right
 
@@ -146,17 +157,13 @@ fn superkmers_from_fragment(
                 }
                 syncmer_pos[hi - 1]
             } else {
-                // Msp/MspXor: lowest (canonical) score, non-demoted preferred
+                // Msp/MspXor: lowest precomputed score
                 let mut best_pos = u32::MAX;
                 let mut best_score = usize::MAX;
                 for j in lo..hi {
-                    let p = syncmer_pos[j];
-                    let (canon, _) = canonical_lmer_index(ascii_slice, p as usize, l);
-                    let tiebreak = if mode == SplitMode::MspXor { canon ^ XOR_CONSTANT } else { canon };
-                    let score = if is_demoted(p) { (1usize << 32) | tiebreak } else { tiebreak };
-                    if score < best_score {
-                        best_score = score;
-                        best_pos = p;
+                    if syncmer_scores[j] < best_score {
+                        best_score = syncmer_scores[j];
+                        best_pos = syncmer_pos[j];
                     }
                 }
                 best_pos
