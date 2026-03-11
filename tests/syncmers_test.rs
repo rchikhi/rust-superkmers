@@ -939,6 +939,194 @@ mod canonical_toggle {
         }
     }
 
+    /// Encode a k-mer at position `pos` in `seq` as a canonical 2-bit integer.
+    fn canonical_kmer(seq: &[u8], pos: usize, k: usize) -> u128 {
+        let mut fwd = 0u128;
+        let mut rc = 0u128;
+        for i in 0..k {
+            let base = match seq[pos + i] {
+                b'A' | b'a' => 0u128,
+                b'C' | b'c' => 1,
+                b'G' | b'g' => 2,
+                b'T' | b't' => 3,
+                _ => 0,
+            };
+            fwd = (fwd << 2) | base;
+            rc |= (3 - base) << (2 * i);
+        }
+        fwd.min(rc)
+    }
+
+    /// Test context-independence: the same canonical k-mer must always map to the
+    /// same minimizer bucket, regardless of surrounding context.
+    ///
+    /// Strategy: take a long sequence, extract overlapping "reads" from different
+    /// positions (and also their reverse complements), run the superkmer iterator
+    /// on each read, and check that every canonical k-mer is assigned to the same mint.
+    fn check_context_independence<F>(name: &str, seq: &[u8], k: usize, l: usize, make_iter: F)
+    where
+        F: Fn(&[u8]) -> Vec<Superkmer>,
+    {
+        use std::collections::HashMap;
+
+        let rc_seq = |s: &[u8]| -> Vec<u8> {
+            s.iter().rev().map(|&b| match b {
+                b'A' => b'T', b'T' => b'A', b'C' => b'G', b'G' => b'C',
+                b'a' => b't', b't' => b'a', b'c' => b'g', b'g' => b'c',
+                _ => b,
+            }).collect()
+        };
+
+        // Map: canonical k-mer -> (mint, first_read_description)
+        let mut kmer_to_mint: HashMap<u128, (u32, String)> = HashMap::new();
+        let mut violations = 0usize;
+
+        let mut check_read = |read: &[u8], desc: &str| {
+            let superkmers = make_iter(read);
+            for sk in &superkmers {
+                let sk_start = sk.start;
+                let sk_end = sk.start + sk.size as usize;
+                for pos in sk_start..=(sk_end - k) {
+                    let canon = canonical_kmer(read, pos, k);
+                    match kmer_to_mint.get(&canon) {
+                        Some((prev_mint, prev_desc)) => {
+                            if *prev_mint != sk.mint {
+                                if violations < 10 {
+                                    eprintln!("  VIOLATION in {}: k-mer at {} got mint={} but previously got mint={} from {}",
+                                        desc, pos, sk.mint, prev_mint, prev_desc);
+                                }
+                                violations += 1;
+                            }
+                        }
+                        None => {
+                            kmer_to_mint.insert(canon, (sk.mint, desc.to_string()));
+                        }
+                    }
+                }
+            }
+        };
+
+        // Overlapping reads of various sizes from different offsets
+        for read_len in [100, 150, 200, 500] {
+            if read_len > seq.len() { continue; }
+            let step = read_len / 3; // heavy overlap
+            let mut offset = 0;
+            while offset + read_len <= seq.len() {
+                let read = &seq[offset..offset + read_len];
+                check_read(read, &format!("fwd[{}..{}]", offset, offset + read_len));
+
+                // Also check reverse complement of the same read
+                let rc = rc_seq(read);
+                check_read(&rc, &format!("rc[{}..{}]", offset, offset + read_len));
+
+                offset += step;
+            }
+        }
+
+        assert_eq!(violations, 0,
+            "{}: {} k-mers assigned to different buckets depending on context ({} distinct k-mers tested)",
+            name, violations, kmer_to_mint.len());
+    }
+
+    #[test]
+    fn test_context_independence_syncmers2_mspxor() {
+        for &len in &[1000, 10000] {
+            for seed in 0..3 {
+                let seq = random_dna(len, seed * 137 + 42);
+                check_context_independence(
+                    "syncmers2:mspxor", &seq, 31, 8,
+                    |s| rust_superkmers::iteratorsyncmers2::SuperkmersIterator::mspxor(s, 31, 8).collect(),
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn test_context_independence_syncmers2_msp() {
+        for seed in 0..3 {
+            let seq = random_dna(5000, seed * 73 + 11);
+            check_context_independence(
+                "syncmers2:msp", &seq, 31, 8,
+                |s| rust_superkmers::iteratorsyncmers2::SuperkmersIterator::msp(s, 31, 8).collect(),
+            );
+        }
+    }
+
+    #[cfg(feature = "simd-mini")]
+    #[test]
+    fn test_context_independence_simdmini_mspxor() {
+        for &len in &[1000, 10000] {
+            for seed in 0..3 {
+                let seq = random_dna(len, seed * 137 + 42);
+                check_context_independence(
+                    "simdmini:mspxor", &seq, 31, 9,
+                    |s| rust_superkmers::iteratorsimdmini::SuperkmersIterator::mspxor(s, 31, 9).collect(),
+                );
+            }
+        }
+    }
+
+    #[cfg(feature = "simd-mini")]
+    #[test]
+    fn test_context_independence_simdmini_msp() {
+        for seed in 0..3 {
+            let seq = random_dna(5000, seed * 73 + 11);
+            check_context_independence(
+                "simdmini:msp", &seq, 31, 9,
+                |s| rust_superkmers::iteratorsimdmini::SuperkmersIterator::msp(s, 31, 9).collect(),
+            );
+        }
+    }
+
+    /// Verify that sticky mode is NOT context-independent (sanity check).
+    /// This test expects violations — if sticky were context-independent,
+    /// we wouldn't need the Msp/MspXor modes.
+    #[test]
+    fn test_sticky_is_context_dependent() {
+        let seq = random_dna(5000, 42);
+        let mut kmer_to_mint: std::collections::HashMap<u128, u32> = std::collections::HashMap::new();
+        let mut violations = 0;
+
+        let rc_seq = |s: &[u8]| -> Vec<u8> {
+            s.iter().rev().map(|&b| match b {
+                b'A' => b'T', b'T' => b'A', b'C' => b'G', b'G' => b'C', _ => b,
+            }).collect()
+        };
+
+        for read_len in [150, 200] {
+            let mut offset = 0;
+            while offset + read_len <= seq.len() {
+                let read = &seq[offset..offset + read_len];
+                let superkmers: Vec<Superkmer> = rust_superkmers::iteratorsyncmers2::SuperkmersIterator::new(read, 31, 8).collect();
+                for sk in &superkmers {
+                    for pos in sk.start..=(sk.start + sk.size as usize - 31) {
+                        let canon = canonical_kmer(read, pos, 31);
+                        if let Some(&prev_mint) = kmer_to_mint.get(&canon) {
+                            if prev_mint != sk.mint { violations += 1; }
+                        } else {
+                            kmer_to_mint.insert(canon, sk.mint);
+                        }
+                    }
+                }
+                let rc = rc_seq(read);
+                let superkmers: Vec<Superkmer> = rust_superkmers::iteratorsyncmers2::SuperkmersIterator::new(&rc, 31, 8).collect();
+                for sk in &superkmers {
+                    for pos in sk.start..=(sk.start + sk.size as usize - 31) {
+                        let canon = canonical_kmer(&rc, pos, 31);
+                        if let Some(&prev_mint) = kmer_to_mint.get(&canon) {
+                            if prev_mint != sk.mint { violations += 1; }
+                        } else {
+                            kmer_to_mint.insert(canon, sk.mint);
+                        }
+                    }
+                }
+                offset += read_len / 3;
+            }
+        }
+        assert!(violations > 0,
+            "Expected sticky mode to have context-dependent violations, but found none");
+    }
+
     /// Test palindromic l-mer: ACGT repeated (palindromic 4-mer). For l=8,
     /// ACGTACGT has rc=ACGTACGT — a self-palindrome. Both modes should agree on mint.
     #[test]
