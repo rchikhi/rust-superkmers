@@ -8,6 +8,8 @@ use rust_superkmers::iteratorkmc2;
 use rust_superkmers::iteratormsp;
 #[cfg(feature = "simd-mini")]
 use rust_superkmers::iteratorsimdmini;
+#[cfg(feature = "simd-mini")]
+use rust_superkmers::iteratorsimdmini_cminim;
 #[cfg(feature = "multi-mini")]
 use rust_superkmers::iteratormultiminimizers;
 
@@ -27,8 +29,8 @@ fn main() {
     let method = args.get(4).map(|s| s.as_str()).unwrap_or("syncmer");
 
     let base_method = method.split(':').next().unwrap();
-    if !["syncmer", "kmc2", "msp", "simdmini", "multimini"].contains(&base_method) {
-        eprintln!("Unknown method: {}. Use 'syncmer', 'kmc2', 'msp', 'simdmini', or 'multimini[:N]'.", method);
+    if !["syncmer", "kmc2", "msp", "simdmini", "cminim", "multimini"].contains(&base_method) {
+        eprintln!("Unknown method: {}. Use 'syncmer', 'kmc2', 'msp', 'simdmini', 'cminim', or 'multimini[:N]'.", method);
         eprintln!("Append ':classical' or ':msp' for context-independent minimizers (e.g. 'syncmer:msp', 'simdmini:msp').");
         std::process::exit(1);
     }
@@ -51,8 +53,8 @@ fn main() {
     } else { vec![0] };
 
     // simdmini/multimini require odd l or even k-l; other methods use even l (8).
-    let l = if base_method == "simdmini" {
-        if l_arg == 0 { 9 } else if l_arg % 2 == 0 { eprintln!("Note: simdmini requires odd l, using l={}", l_arg + 1); l_arg + 1 } else { l_arg }
+    let l = if base_method == "simdmini" || base_method == "cminim" {
+        if l_arg == 0 { 9 } else if l_arg % 2 == 0 { eprintln!("Note: {} requires odd l, using l={}", base_method, l_arg + 1); l_arg + 1 } else { l_arg }
     } else if base_method == "multimini" {
         if l_arg == 0 { 9 } else if (k - l_arg) % 2 != 0 { eprintln!("Note: multimini requires k-l even, using l={}", l_arg + 1); l_arg + 1 } else { l_arg }
     } else {
@@ -144,6 +146,11 @@ fn process_seq(seq: &[u8], k: usize, l: usize, method: &str, nb_hash: usize, spl
                 rust_superkmers::SplitMode::MspXor => iteratorsimdmini::SuperkmersIterator::mspxor_with_n(seq, k, l),
                 rust_superkmers::SplitMode::Sticky => iteratorsimdmini::SuperkmersIterator::new_with_n(seq, k, l),
             };
+            count_superkmers(iter, k, bucket_counts, total_kmers, total_superkmers);
+        }
+        #[cfg(feature = "simd-mini")]
+        "cminim" => {
+            let iter = iteratorsimdmini_cminim::SuperkmersIterator::new_with_n(seq, k, l);
             count_superkmers(iter, k, bucket_counts, total_kmers, total_superkmers);
         }
         #[cfg(feature = "multi-mini")]

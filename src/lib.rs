@@ -10,6 +10,8 @@ pub mod iteratorsyncmers2;
 pub mod iteratorkmc2;
 #[cfg(feature = "simd-mini")]
 pub mod iteratorsimdmini;
+#[cfg(feature = "simd-mini")]
+pub mod iteratorsimdmini_cminim;
 #[cfg(feature = "multi-mini")]
 pub mod iteratormultiminimizers;
 pub mod naivesyncmers;

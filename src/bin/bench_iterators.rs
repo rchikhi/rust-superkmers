@@ -120,6 +120,50 @@ fn main() {
             let v: Vec<_> = iter.collect();
             std::hint::black_box(v);
         });
+
+        bench("cminim (l=9)", &seq, iters, |s| {
+            let iter =
+                rust_superkmers::iteratorsimdmini_cminim::SuperkmersIterator::new(s, k, 9);
+            let v: Vec<_> = iter.collect();
+            std::hint::black_box(v);
+        });
+        }
+
+        // Syncmer detection only (no superkmer extraction)
+        {
+            let scores = rust_superkmers::iteratorsyncmers2::mspxor_syncmer_scores(8);
+            bench("syncmers2 scores-only l=8", &seq, iters, |s| {
+                let storage = rust_superkmers::utils::bitpack_fragment(s);
+                let mut total = 0usize;
+                for i in 0..s.len().saturating_sub(7) {
+                    total += scores[rust_superkmers::iteratorsyncmers2::get_kmer_value(&storage, i, 8)];
+                }
+                std::hint::black_box(total);
+            });
+        }
+
+        {
+            let scores = rust_superkmers::iteratorsyncmers2::mspxor_syncmer_scores(9);
+            bench("syncmers2 scores-only l=9", &seq, iters, |s| {
+                let storage = rust_superkmers::utils::bitpack_fragment(s);
+                let mut total = 0usize;
+                for i in 0..s.len().saturating_sub(8) {
+                    total += scores[rust_superkmers::iteratorsyncmers2::get_kmer_value(&storage, i, 9)];
+                }
+                std::hint::black_box(total);
+            });
+        }
+
+        #[cfg(feature = "simd-mini")]
+        {
+            use simd_minimizers::packed_seq::AsciiSeq;
+            let mut positions = Vec::new();
+            bench("simdmini SIMD-detect l=9", &seq, iters, |s| {
+                positions.clear();
+                simd_minimizers::canonical_closed_syncmers(2, 8)
+                    .run(AsciiSeq(s), &mut positions);
+                std::hint::black_box(positions.len());
+            });
         }
 
         // Extractor benchmarks (reusable buffers, amortized across reads)
@@ -134,6 +178,14 @@ fn main() {
         {
             let mut ext2 = rust_superkmers::iteratorsyncmers2::SuperkmerExtractor::mspxor(k, 8);
             bench("syncmers2-ext:mspxor", &seq, iters, |s| {
+                let sks = ext2.process(s);
+                std::hint::black_box(sks);
+            });
+        }
+
+        {
+            let mut ext2 = rust_superkmers::iteratorsyncmers2::SuperkmerExtractor::mspxor(k, 9);
+            bench("syncmers2-ext:mspxor l=9", &seq, iters, |s| {
                 let sks = ext2.process(s);
                 std::hint::black_box(sks);
             });
