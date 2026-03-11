@@ -11,7 +11,7 @@
 //! let iter = SuperkmersIterator::new(seq, 31, 9);           // canonical
 //! let iter = SuperkmersIterator::non_canonical(seq, 31, 9); // forward-strand
 //! ```
-use crate::Superkmer;
+use crate::{Superkmer, SplitMode};
 
 const SMER_SIZE: usize = 2; // syncmer's s parameter
 
@@ -66,6 +66,7 @@ fn superkmers_from_fragment(
     l: usize,
     offset: usize,
     canonical: bool,
+    mode: SplitMode,
     results: &mut Vec<Superkmer>,
     syncmer_pos: &mut Vec<u32>,
 ) {
@@ -95,115 +96,191 @@ fn superkmers_from_fragment(
         (b0 == b'A' || b0 == b'T') && ascii_slice[p..p + l].iter().all(|&b| b & 0xDF == b0)
     };
 
-    // MSP sliding window: track RIGHTMOST syncmer as minimizer.
-    // After each rescan, if the rightmost is demoted (all-A/T), fall back to
-    // the rightmost non-demoted in the same range. ~16% overhead on 1M random DNA.
     let num_kmers = seq_len - k + 1;
     let max_lmer_offset = k - l;
-    let mut ptr = 0usize;
-    let mut curr_min_pos: u32 = u32::MAX;
-    let mut sk_start: usize = 0;
     results.reserve(syncmer_pos.len());
 
-    // After taking rightmost in syncmer_pos[from..j_end], demote if needed.
-    macro_rules! demote_check {
-        ($from:expr, $j_end:expr) => {
-            if curr_min_pos != u32::MAX && is_demoted(curr_min_pos) {
-                let mut best = u32::MAX;
-                let mut di = $from;
-                while di < $j_end {
-                    if !is_demoted(syncmer_pos[di]) { best = syncmer_pos[di]; }
-                    di += 1;
-                }
-                if best != u32::MAX { curr_min_pos = best; }
-            }
-        };
-    }
-
-    // Initialize: find rightmost syncmer in first k-mer window [0, k-l]
-    if num_kmers > 0 {
-        let start_ptr = ptr;
-        while ptr < syncmer_pos.len() && (syncmer_pos[ptr] as usize) <= max_lmer_offset {
-            curr_min_pos = syncmer_pos[ptr];
-            ptr += 1;
-        }
-        if ptr > start_ptr { demote_check!(start_ptr, ptr); }
-    }
-
-    let mut i = 1usize;
-    while i <= num_kmers {
-        let need_new_min = if i < num_kmers {
-            (curr_min_pos as usize) < i
+    // Helper: emit a superkmer from sk_start to the k-mer at last_kmer_idx.
+    let emit = |sk_start: usize, last_kmer_idx: usize, min_pos: u32,
+                results: &mut Vec<Superkmer>| {
+        let start = sk_start;
+        let end = last_kmer_idx + k;
+        let size = end - start;
+        let mpos_fwd = min_pos as usize - start;
+        let (mint, mint_is_rc) = if canonical {
+            canonical_lmer_index(ascii_slice, min_pos as usize, l)
         } else {
-            true // sentinel: flush last superkmer
+            (forward_lmer_index(ascii_slice, min_pos as usize, l), false)
+        };
+        results.push(Superkmer {
+            start: start + offset,
+            mint: mint as u32,
+            size: size as u16,
+            mpos: mpos_fwd as u16,
+            mint_is_rc,
+        });
+    };
+
+    if mode != SplitMode::Sticky {
+        // Classical: rightmost non-demoted syncmer in window, split on any change.
+        // Msp/MspXor: lowest-score non-demoted syncmer in window, split on any change.
+        // All are context-independent.
+        if num_kmers == 0 { return; }
+
+        const XOR_CONSTANT: usize = 0xACE5_ACE5;
+
+        let mut lo = 0usize; // first syncmer index >= window left
+        let mut hi = 0usize; // first syncmer index > window right
+
+        let find_best = |lo: usize, hi: usize| -> u32 {
+            if lo >= hi { return u32::MAX; }
+            if mode == SplitMode::Classical {
+                // Rightmost non-demoted, fallback to rightmost demoted
+                if !is_demoted(syncmer_pos[hi - 1]) {
+                    return syncmer_pos[hi - 1];
+                }
+                let mut j = hi - 1;
+                while j > lo {
+                    j -= 1;
+                    if !is_demoted(syncmer_pos[j]) { return syncmer_pos[j]; }
+                }
+                syncmer_pos[hi - 1]
+            } else {
+                // Msp/MspXor: lowest (canonical) score, non-demoted preferred
+                let mut best_pos = u32::MAX;
+                let mut best_score = usize::MAX;
+                for j in lo..hi {
+                    let p = syncmer_pos[j];
+                    let (canon, _) = canonical_lmer_index(ascii_slice, p as usize, l);
+                    let tiebreak = if mode == SplitMode::MspXor { canon ^ XOR_CONSTANT } else { canon };
+                    let score = if is_demoted(p) { (1usize << 32) | tiebreak } else { tiebreak };
+                    if score < best_score {
+                        best_score = score;
+                        best_pos = p;
+                    }
+                }
+                best_pos
+            }
         };
 
-        if need_new_min {
-            if curr_min_pos != u32::MAX {
-                let start = sk_start;
-                let end = i - 1 + k;
-                let size = end - start;
-                let mpos_fwd = curr_min_pos as usize - start;
+        // Initialize for first k-mer
+        while hi < syncmer_pos.len() && (syncmer_pos[hi] as usize) <= max_lmer_offset {
+            hi += 1;
+        }
+        let mut curr_min = find_best(lo, hi);
+        let mut sk_start = 0usize;
 
-                let (mint, mint_is_rc) = if canonical {
-                    canonical_lmer_index(ascii_slice, curr_min_pos as usize, l)
-                } else {
-                    (forward_lmer_index(ascii_slice, curr_min_pos as usize, l), false)
-                };
-
-                results.push(Superkmer {
-                    start: start + offset,
-                    mint: mint as u32,
-                    size: size as u16,
-                    mpos: mpos_fwd as u16,
-                    mint_is_rc,
-                });
+        for i in 1..num_kmers {
+            // Advance lo: remove syncmers that fell off left edge
+            while lo < syncmer_pos.len() && (syncmer_pos[lo] as usize) < i {
+                lo += 1;
+            }
+            // Advance hi: add syncmers entering from right edge
+            while hi < syncmer_pos.len() && (syncmer_pos[hi] as usize) <= i + max_lmer_offset {
+                hi += 1;
             }
 
-            sk_start = i;
-            curr_min_pos = u32::MAX;
-            if i < num_kmers {
-                while ptr < syncmer_pos.len() && (syncmer_pos[ptr] as usize) < i {
-                    ptr += 1;
+            let new_min = find_best(lo, hi);
+
+            if new_min != curr_min {
+                if curr_min != u32::MAX {
+                    emit(sk_start, i - 1, curr_min, results);
                 }
-                let scan_from = ptr;
-                let mut j = ptr;
-                while j < syncmer_pos.len() && (syncmer_pos[j] as usize) <= i + max_lmer_offset {
-                    curr_min_pos = syncmer_pos[j];
-                    j += 1;
+                sk_start = i;
+                curr_min = new_min;
+            }
+        }
+        // Flush final superkmer
+        if curr_min != u32::MAX {
+            emit(sk_start, num_kmers - 1, curr_min, results);
+        }
+    } else {
+        // Sticky MSP: track RIGHTMOST syncmer as minimizer, only re-evaluate
+        // when current minimizer falls off the left edge.
+        let mut ptr = 0usize;
+        let mut curr_min_pos: u32 = u32::MAX;
+        let mut sk_start: usize = 0;
+
+        // After taking rightmost in syncmer_pos[from..j_end], demote if needed.
+        macro_rules! demote_check {
+            ($from:expr, $j_end:expr) => {
+                if curr_min_pos != u32::MAX && is_demoted(curr_min_pos) {
+                    let mut best = u32::MAX;
+                    let mut di = $from;
+                    while di < $j_end {
+                        if !is_demoted(syncmer_pos[di]) { best = syncmer_pos[di]; }
+                        di += 1;
+                    }
+                    if best != u32::MAX { curr_min_pos = best; }
                 }
-                if j > scan_from { demote_check!(scan_from, j); }
-                // No syncmer in this window — jump to next syncmer position
-                if curr_min_pos == u32::MAX && ptr < syncmer_pos.len() {
-                    let next_sync = syncmer_pos[ptr] as usize;
-                    // Jump i so next_sync is within the window [i, i+max_lmer_offset]
-                    let jump_to = if next_sync > max_lmer_offset {
-                        next_sync - max_lmer_offset
-                    } else {
-                        1
-                    };
-                    if jump_to > i {
-                        sk_start = jump_to;
-                        i = jump_to;
-                        // Re-scan for syncmers in [jump_to, jump_to+max_lmer_offset]
-                        let scan_from2 = ptr;
-                        let mut j2 = ptr;
-                        while j2 < syncmer_pos.len() && (syncmer_pos[j2] as usize) <= i + max_lmer_offset {
-                            curr_min_pos = syncmer_pos[j2];
-                            j2 += 1;
+            };
+        }
+
+        // Initialize: find rightmost syncmer in first k-mer window [0, k-l]
+        if num_kmers > 0 {
+            let start_ptr = ptr;
+            while ptr < syncmer_pos.len() && (syncmer_pos[ptr] as usize) <= max_lmer_offset {
+                curr_min_pos = syncmer_pos[ptr];
+                ptr += 1;
+            }
+            if ptr > start_ptr { demote_check!(start_ptr, ptr); }
+        }
+
+        let mut i = 1usize;
+        while i <= num_kmers {
+            let need_new_min = if i < num_kmers {
+                (curr_min_pos as usize) < i
+            } else {
+                true // sentinel: flush last superkmer
+            };
+
+            if need_new_min {
+                if curr_min_pos != u32::MAX {
+                    emit(sk_start, i - 1, curr_min_pos, results);
+                }
+
+                sk_start = i;
+                curr_min_pos = u32::MAX;
+                if i < num_kmers {
+                    while ptr < syncmer_pos.len() && (syncmer_pos[ptr] as usize) < i {
+                        ptr += 1;
+                    }
+                    let scan_from = ptr;
+                    let mut j = ptr;
+                    while j < syncmer_pos.len() && (syncmer_pos[j] as usize) <= i + max_lmer_offset {
+                        curr_min_pos = syncmer_pos[j];
+                        j += 1;
+                    }
+                    if j > scan_from { demote_check!(scan_from, j); }
+                    // No syncmer in this window — jump to next syncmer position
+                    if curr_min_pos == u32::MAX && ptr < syncmer_pos.len() {
+                        let next_sync = syncmer_pos[ptr] as usize;
+                        let jump_to = if next_sync > max_lmer_offset {
+                            next_sync - max_lmer_offset
+                        } else {
+                            1
+                        };
+                        if jump_to > i {
+                            sk_start = jump_to;
+                            i = jump_to;
+                            let scan_from2 = ptr;
+                            let mut j2 = ptr;
+                            while j2 < syncmer_pos.len() && (syncmer_pos[j2] as usize) <= i + max_lmer_offset {
+                                curr_min_pos = syncmer_pos[j2];
+                                j2 += 1;
+                            }
+                            if j2 > scan_from2 { demote_check!(scan_from2, j2); }
                         }
-                        if j2 > scan_from2 { demote_check!(scan_from2, j2); }
                     }
                 }
             }
-        }
-        // Jump directly to when the current minimizer falls off the left edge.
-        // Between here and there, need_new_min is always false (no work done).
-        if curr_min_pos != u32::MAX {
-            let jump = curr_min_pos as usize + 1;
-            i = if jump > i + 1 { std::cmp::min(jump, num_kmers) } else { i + 1 };
-        } else {
-            i += 1;
+            // Jump directly to when the current minimizer falls off the left edge.
+            if curr_min_pos != u32::MAX {
+                let jump = curr_min_pos as usize + 1;
+                i = if jump > i + 1 { std::cmp::min(jump, num_kmers) } else { i + 1 };
+            } else {
+                i += 1;
+            }
         }
     }
 }
@@ -214,25 +291,30 @@ pub struct SuperkmersIterator {
     pos: usize,
 }
 
+/// Generate iterator constructors for each (mode, canonical) combination.
+macro_rules! iter_constructors {
+    ($($name:ident, $name_n:ident, $canonical:expr, $mode:expr;)*) => {
+        $(
+            pub fn $name(seq: &[u8], k: usize, l: usize) -> Self {
+                Self::new_inner_full(seq, k, l, $canonical, $mode)
+            }
+            pub fn $name_n(seq: &[u8], k: usize, l: usize) -> Self {
+                Self::new_with_n_inner_full(seq, k, l, $canonical, $mode)
+            }
+        )*
+    };
+}
+
 impl SuperkmersIterator {
-    /// Process a sequence assumed to contain no N characters. Mint is canonical.
-    pub fn new(seq: &[u8], k: usize, l: usize) -> Self {
-        Self::new_inner(seq, k, l, true)
-    }
-
-    /// Process a sequence that may contain N/n characters. Mint is canonical.
-    pub fn new_with_n(seq: &[u8], k: usize, l: usize) -> Self {
-        Self::new_with_n_inner(seq, k, l, true)
-    }
-
-    /// Non-canonical version (forward-strand mint, mint_is_rc=false).
-    pub fn non_canonical(seq: &[u8], k: usize, l: usize) -> Self {
-        Self::new_inner(seq, k, l, false)
-    }
-
-    /// Non-canonical version with N-splitting.
-    pub fn non_canonical_with_n(seq: &[u8], k: usize, l: usize) -> Self {
-        Self::new_with_n_inner(seq, k, l, false)
+    iter_constructors! {
+        new,                            new_with_n,                            true,  SplitMode::Sticky;
+        non_canonical,                  non_canonical_with_n,                  false, SplitMode::Sticky;
+        classical,                      classical_with_n,                      true,  SplitMode::Classical;
+        classical_non_canonical,        classical_non_canonical_with_n,        false, SplitMode::Classical;
+        msp,                            msp_with_n,                            true,  SplitMode::Msp;
+        msp_non_canonical,              msp_non_canonical_with_n,              false, SplitMode::Msp;
+        mspxor,                         mspxor_with_n,                         true,  SplitMode::MspXor;
+        mspxor_non_canonical,           mspxor_non_canonical_with_n,           false, SplitMode::MspXor;
     }
 
     /// Access the 2-bit packed representation of the input sequence.
@@ -240,21 +322,21 @@ impl SuperkmersIterator {
         &self.storage
     }
 
-    fn new_inner(seq: &[u8], k: usize, l: usize, canonical: bool) -> Self {
+    fn new_inner_full(seq: &[u8], k: usize, l: usize, canonical: bool, mode: SplitMode) -> Self {
         let storage = crate::utils::bitpack_fragment(seq);
         let mut superkmers = Vec::new();
         let mut syncmer_pos = Vec::new();
-        superkmers_from_fragment(seq, k, l, 0, canonical, &mut superkmers, &mut syncmer_pos);
+        superkmers_from_fragment(seq, k, l, 0, canonical, mode, &mut superkmers, &mut syncmer_pos);
         SuperkmersIterator { superkmers, storage, pos: 0 }
     }
 
-    fn new_with_n_inner(seq: &[u8], k: usize, l: usize, canonical: bool) -> Self {
+    fn new_with_n_inner_full(seq: &[u8], k: usize, l: usize, canonical: bool, mode: SplitMode) -> Self {
         let storage = crate::utils::bitpack_fragment(seq);
         let fragments = crate::utils::split_on_n(seq, k);
         let mut superkmers = Vec::new();
         let mut syncmer_pos = Vec::new();
         for (offset, fragment) in &fragments {
-            superkmers_from_fragment(fragment, k, l, *offset, canonical, &mut superkmers, &mut syncmer_pos);
+            superkmers_from_fragment(fragment, k, l, *offset, canonical, mode, &mut superkmers, &mut syncmer_pos);
         }
         SuperkmersIterator { superkmers, storage, pos: 0 }
     }
@@ -289,18 +371,33 @@ pub struct SuperkmerExtractor {
     k: usize,
     l: usize,
     canonical: bool,
+    mode: SplitMode,
+}
+
+/// Generate extractor constructors for each (mode, canonical) combination.
+macro_rules! extractor_constructors {
+    ($($name:ident, $canonical:expr, $mode:expr;)*) => {
+        $(
+            pub fn $name(k: usize, l: usize) -> Self {
+                Self::new_inner_full(k, l, $canonical, $mode)
+            }
+        )*
+    };
 }
 
 impl SuperkmerExtractor {
-    pub fn new(k: usize, l: usize) -> Self {
-        Self::new_inner(k, l, true)
+    extractor_constructors! {
+        new,                       true,  SplitMode::Sticky;
+        non_canonical,             false, SplitMode::Sticky;
+        classical,                 true,  SplitMode::Classical;
+        classical_non_canonical,   false, SplitMode::Classical;
+        msp,                       true,  SplitMode::Msp;
+        msp_non_canonical,         false, SplitMode::Msp;
+        mspxor,                    true,  SplitMode::MspXor;
+        mspxor_non_canonical,      false, SplitMode::MspXor;
     }
 
-    pub fn non_canonical(k: usize, l: usize) -> Self {
-        Self::new_inner(k, l, false)
-    }
-
-    fn new_inner(k: usize, l: usize, canonical: bool) -> Self {
+    fn new_inner_full(k: usize, l: usize, canonical: bool, mode: SplitMode) -> Self {
         SuperkmerExtractor {
             superkmers: Vec::new(),
             syncmer_pos: Vec::new(),
@@ -308,6 +405,7 @@ impl SuperkmerExtractor {
             k,
             l,
             canonical,
+            mode,
         }
     }
 
@@ -317,7 +415,7 @@ impl SuperkmerExtractor {
         let num_words = (seq.len() + 31) / 32;
         self.storage.resize(num_words, 0);
         crate::utils::bitpack_fragment_into(seq, &mut self.storage);
-        superkmers_from_fragment(seq, self.k, self.l, 0, self.canonical, &mut self.superkmers, &mut self.syncmer_pos);
+        superkmers_from_fragment(seq, self.k, self.l, 0, self.canonical, self.mode, &mut self.superkmers, &mut self.syncmer_pos);
         &self.superkmers
     }
 
@@ -329,7 +427,7 @@ impl SuperkmerExtractor {
         crate::utils::bitpack_fragment_into(seq, &mut self.storage);
         let fragments = crate::utils::split_on_n(seq, self.k);
         for (offset, fragment) in &fragments {
-            superkmers_from_fragment(fragment, self.k, self.l, *offset, self.canonical, &mut self.superkmers, &mut self.syncmer_pos);
+            superkmers_from_fragment(fragment, self.k, self.l, *offset, self.canonical, self.mode, &mut self.superkmers, &mut self.syncmer_pos);
         }
         &self.superkmers
     }

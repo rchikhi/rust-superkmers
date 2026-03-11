@@ -16,6 +16,21 @@ pub mod naivesyncmers;
 use std::cmp::Ordering;
 use lazy_static::lazy_static;
 
+/// Controls how superkmer boundaries are determined.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum SplitMode {
+    /// Default sticky MSP: ties keep current minimizer. Longest superkmers, context-dependent.
+    Sticky,
+    /// Classical: split on every minimizer change (rightmost wins on tie). Context-independent.
+    Classical,
+    /// Syncmer-priority lexicographic: composite score (syncmer_priority, canonical_value).
+    /// No ties, context-independent, fewer splits than Classical. A-rich bias.
+    Msp,
+    /// Syncmer-priority with XOR tiebreaker: composite score (syncmer_priority, canonical_value ^ constant).
+    /// No ties, context-independent, better bucket balance than Msp.
+    MspXor,
+}
+
 pub fn generate_canonical_table<const K: usize>() -> Vec<(u32, bool)> {
     let mut table = vec![(0u32, false); 1 << (2 * K)];
     for fwd in 0..(1 << (2 * K)) {

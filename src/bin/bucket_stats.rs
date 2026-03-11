@@ -29,8 +29,17 @@ fn main() {
     let base_method = method.split(':').next().unwrap();
     if !["syncmer", "kmc2", "msp", "simdmini", "multimini"].contains(&base_method) {
         eprintln!("Unknown method: {}. Use 'syncmer', 'kmc2', 'msp', 'simdmini', or 'multimini[:N]'.", method);
+        eprintln!("Append ':classical' or ':msp' for context-independent minimizers (e.g. 'syncmer:msp', 'simdmini:msp').");
         std::process::exit(1);
     }
+
+    let suffix = method.split(':').nth(1).unwrap_or("");
+    let split_mode = match suffix {
+        "classical" => rust_superkmers::SplitMode::Classical,
+        "msp" => rust_superkmers::SplitMode::Msp,
+        "mspxor" => rust_superkmers::SplitMode::MspXor,
+        _ => rust_superkmers::SplitMode::Sticky,
+    };
 
     // Parse nb_hash for multimini (e.g. "multimini:4")
     // If just "multimini" with no :N, run all variants (1, 2, 4)
@@ -65,7 +74,7 @@ fn main() {
         let mut total_superkmers: u64 = 0;
 
         for (i, seq) in sequences.iter().enumerate() {
-            process_seq(seq, k, l, method, nb_hash, &mut bucket_counts, &mut total_kmers, &mut total_superkmers);
+            process_seq(seq, k, l, method, nb_hash, split_mode, &mut bucket_counts, &mut total_kmers, &mut total_superkmers);
             if (i + 1) % 10 == 0 {
                 eprintln!("  processed {} sequences, {} superkmers, {} kmers so far", i + 1, total_superkmers, total_kmers);
             }
@@ -107,11 +116,16 @@ fn read_fasta(path: &str) -> Vec<Vec<u8>> {
     sequences
 }
 
-fn process_seq(seq: &[u8], k: usize, l: usize, method: &str, nb_hash: usize, bucket_counts: &mut HashMap<u32, u64>, total_kmers: &mut u64, total_superkmers: &mut u64) {
+fn process_seq(seq: &[u8], k: usize, l: usize, method: &str, nb_hash: usize, split_mode: rust_superkmers::SplitMode, bucket_counts: &mut HashMap<u32, u64>, total_kmers: &mut u64, total_superkmers: &mut u64) {
     let base_method = method.split(':').next().unwrap();
     match base_method {
         "syncmer" => {
-            let iter = iteratorsyncmers2::SuperkmersIterator::new_with_n(seq, k, l);
+            let iter = match split_mode {
+                rust_superkmers::SplitMode::Classical => iteratorsyncmers2::SuperkmersIterator::classical_with_n(seq, k, l),
+                rust_superkmers::SplitMode::Msp => iteratorsyncmers2::SuperkmersIterator::msp_with_n(seq, k, l),
+                rust_superkmers::SplitMode::MspXor => iteratorsyncmers2::SuperkmersIterator::mspxor_with_n(seq, k, l),
+                rust_superkmers::SplitMode::Sticky => iteratorsyncmers2::SuperkmersIterator::new_with_n(seq, k, l),
+            };
             count_superkmers(iter, k, bucket_counts, total_kmers, total_superkmers);
         }
         "kmc2" => {
@@ -124,7 +138,12 @@ fn process_seq(seq: &[u8], k: usize, l: usize, method: &str, nb_hash: usize, buc
         }
         #[cfg(feature = "simd-mini")]
         "simdmini" => {
-            let iter = iteratorsimdmini::SuperkmersIterator::new_with_n(seq, k, l);
+            let iter = match split_mode {
+                rust_superkmers::SplitMode::Classical => iteratorsimdmini::SuperkmersIterator::classical_with_n(seq, k, l),
+                rust_superkmers::SplitMode::Msp => iteratorsimdmini::SuperkmersIterator::msp_with_n(seq, k, l),
+                rust_superkmers::SplitMode::MspXor => iteratorsimdmini::SuperkmersIterator::mspxor_with_n(seq, k, l),
+                rust_superkmers::SplitMode::Sticky => iteratorsimdmini::SuperkmersIterator::new_with_n(seq, k, l),
+            };
             count_superkmers(iter, k, bucket_counts, total_kmers, total_superkmers);
         }
         #[cfg(feature = "multi-mini")]

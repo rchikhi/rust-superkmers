@@ -12,7 +12,7 @@
 //! let iter = rust_superkmers::iteratorsyncmers2::SuperkmersIterator::non_canonical(seq, 21, 8);
 //! for sk in iter { /* forward-strand mint */ }
 //! ```
-use crate::Superkmer;
+use crate::{Superkmer, SplitMode};
 use lazy_static::lazy_static;
 
 const S: usize = 2; //syncmer's s parameter
@@ -20,6 +20,10 @@ const S: usize = 2; //syncmer's s parameter
 lazy_static! {
 static ref SYNCMER_SCORES_8: Vec<usize> = generate_syncmer_scores::<8>();
 static ref SYNCMER_SCORES_9: Vec<usize> = generate_syncmer_scores::<9>();
+static ref MSP_SYNCMER_SCORES_8: Vec<usize> = generate_msp_syncmer_scores::<8>();
+static ref MSP_SYNCMER_SCORES_9: Vec<usize> = generate_msp_syncmer_scores::<9>();
+static ref MSPXOR_SYNCMER_SCORES_8: Vec<usize> = generate_mspxor_syncmer_scores::<8>();
+static ref MSPXOR_SYNCMER_SCORES_9: Vec<usize> = generate_mspxor_syncmer_scores::<9>();
 }
 
 fn syncmer_scores(l: usize) -> &'static [usize] {
@@ -27,6 +31,22 @@ fn syncmer_scores(l: usize) -> &'static [usize] {
         8 => &SYNCMER_SCORES_8[..],
         9 => &SYNCMER_SCORES_9[..],
         _ => panic!("Unsupported l={} for syncmer scores", l),
+    }
+}
+
+fn msp_syncmer_scores(l: usize) -> &'static [usize] {
+    match l {
+        8 => &MSP_SYNCMER_SCORES_8[..],
+        9 => &MSP_SYNCMER_SCORES_9[..],
+        _ => panic!("Unsupported l={} for MSP syncmer scores", l),
+    }
+}
+
+fn mspxor_syncmer_scores(l: usize) -> &'static [usize] {
+    match l {
+        8 => &MSPXOR_SYNCMER_SCORES_8[..],
+        9 => &MSPXOR_SYNCMER_SCORES_9[..],
+        _ => panic!("Unsupported l={} for MSP-xor syncmer scores", l),
     }
 }
 
@@ -62,6 +82,37 @@ fn generate_syncmer_scores<const K: usize>() -> Vec<usize> {
     }
     scores[0] = 1; // Demote all-A l-mer: valid syncmer but causes hot buckets
     scores[(1 << (2 * K)) - 1] = 1; // Demote all-T l-mer (RC of all-A, same canonical bucket)
+    scores
+}
+
+/// MSP scores: composite (syncmer_priority << 32 | canonical_value).
+/// Syncmers sort before non-syncmers; within each group, lower canonical value wins.
+/// Scores are unique per canonical l-mer, so ties only occur between forward/RC
+/// pairs (same bucket), making the sticky loop context-independent.
+fn generate_msp_syncmer_scores<const K: usize>() -> Vec<usize> {
+    let base = generate_syncmer_scores::<K>();
+    let canon_table = canonical_table(K);
+    let mut scores = vec![0usize; 1 << (2 * K)];
+    for fwd in 0..(1 << (2 * K)) {
+        let (canon_val, _) = canon_table[fwd];
+        scores[fwd] = (base[fwd] << 32) | canon_val as usize;
+    }
+    scores
+}
+
+/// Random constant for XOR tiebreaker. Breaks lexicographic ordering without a full hash.
+const XOR_CONSTANT: usize = 0xACE5_ACE5;
+
+/// MSP-xor scores: composite (syncmer_priority << 32 | (canonical_value ^ XOR_CONSTANT)).
+/// Like MSP but XORs a constant to break A-rich lexicographic bias.
+fn generate_mspxor_syncmer_scores<const K: usize>() -> Vec<usize> {
+    let base = generate_syncmer_scores::<K>();
+    let canon_table = canonical_table(K);
+    let mut scores = vec![0usize; 1 << (2 * K)];
+    for fwd in 0..(1 << (2 * K)) {
+        let (canon_val, _) = canon_table[fwd];
+        scores[fwd] = (base[fwd] << 32) | (canon_val as usize ^ XOR_CONSTANT);
+    }
     scores
 }
 
@@ -130,7 +181,12 @@ impl PartialOrd for MinPos {
 /// Run MSP sliding window on a single fragment, returning (kmer_start, minimizer_pos, minimizer_kmer, fragment_end).
 /// All positions are absolute (offset already added).
 /// `scores` maps each l-mer integer value to its score (lower = better minimizer).
-fn msp_minimizer_positions_into(storage: &[u64], frag_len: usize, k: usize, l: usize, offset: usize, scores: &[usize], min_positions: &mut Vec<(usize, usize, usize, usize)>) {
+fn msp_minimizer_positions_into(storage: &[u64], frag_len: usize, k: usize, l: usize, offset: usize, mode: SplitMode, min_positions: &mut Vec<(usize, usize, usize, usize)>) {
+    let scores = match mode {
+        SplitMode::Msp => msp_syncmer_scores(l),
+        SplitMode::MspXor => mspxor_syncmer_scores(l),
+        _ => syncmer_scores(l),
+    };
     let mp = |pos: usize| -> MinPos {
         let kmer = get_kmer_value(storage, pos, l);
         let val = scores[kmer];
@@ -158,7 +214,7 @@ fn msp_minimizer_positions_into(storage: &[u64], frag_len: usize, k: usize, l: u
             if i > min_pos.pos {
                 min_pos = find_min(i, i + k - l);
                 min_positions.push((i + offset, min_pos.pos + offset, min_pos.kmer, frag_end));
-            } else if end_pos.val < min_pos.val {
+            } else if if mode == SplitMode::Classical { end_pos < min_pos } else { end_pos.val < min_pos.val } {
                 min_pos = end_pos;
                 min_positions.push((i + offset, min_pos.pos + offset, min_pos.kmer, frag_end));
             }
@@ -175,25 +231,30 @@ pub struct SuperkmersIterator {
     canonical: bool,
 }
 
+/// Generate iterator constructors for each (mode, canonical) combination.
+macro_rules! iter_constructors {
+    ($($name:ident, $name_n:ident, $canonical:expr, $mode:expr;)*) => {
+        $(
+            pub fn $name(seq_str: &[u8], k: usize, l: usize) -> Self {
+                Self::new_inner_full(seq_str, k, l, $canonical, $mode)
+            }
+            pub fn $name_n(seq_str: &[u8], k: usize, l: usize) -> Self {
+                Self::new_with_n_inner_full(seq_str, k, l, $canonical, $mode)
+            }
+        )*
+    };
+}
+
 impl SuperkmersIterator {
-    /// Process a sequence assumed to contain no N characters. Mint is canonical.
-    pub fn new(seq_str: &[u8], k: usize, l: usize) -> Self {
-        Self::new_inner(seq_str, k, l, true)
-    }
-
-    /// Process a sequence that may contain N/n characters. Mint is canonical.
-    pub fn new_with_n(seq_str: &[u8], k: usize, l: usize) -> Self {
-        Self::new_with_n_inner(seq_str, k, l, true)
-    }
-
-    /// Non-canonical version (forward-strand mint, mint_is_rc=false).
-    pub fn non_canonical(seq_str: &[u8], k: usize, l: usize) -> Self {
-        Self::new_inner(seq_str, k, l, false)
-    }
-
-    /// Non-canonical version with N-splitting.
-    pub fn non_canonical_with_n(seq_str: &[u8], k: usize, l: usize) -> Self {
-        Self::new_with_n_inner(seq_str, k, l, false)
+    iter_constructors! {
+        new,                            new_with_n,                            true,  SplitMode::Sticky;
+        non_canonical,                  non_canonical_with_n,                  false, SplitMode::Sticky;
+        classical,                      classical_with_n,                      true,  SplitMode::Classical;
+        classical_non_canonical,        classical_non_canonical_with_n,        false, SplitMode::Classical;
+        msp,                            msp_with_n,                            true,  SplitMode::Msp;
+        msp_non_canonical,              msp_non_canonical_with_n,              false, SplitMode::Msp;
+        mspxor,                         mspxor_with_n,                         true,  SplitMode::MspXor;
+        mspxor_non_canonical,           mspxor_non_canonical_with_n,           false, SplitMode::MspXor;
     }
 
     /// Access the 2-bit packed representation of the input sequence.
@@ -201,11 +262,10 @@ impl SuperkmersIterator {
         &self.storage
     }
 
-    fn new_inner(seq_str: &[u8], k: usize, l: usize, canonical: bool) -> Self {
+    fn new_inner_full(seq_str: &[u8], k: usize, l: usize, canonical: bool, mode: SplitMode) -> Self {
         let storage = bitpack_fragment(seq_str);
-        let scores = syncmer_scores(l);
         let mut min_positions = Vec::new();
-        msp_minimizer_positions_into(&storage, seq_str.len(), k, l, 0, scores, &mut min_positions);
+        msp_minimizer_positions_into(&storage, seq_str.len(), k, l, 0, mode, &mut min_positions);
 
         SuperkmersIterator {
             min_positions,
@@ -217,16 +277,15 @@ impl SuperkmersIterator {
         }
     }
 
-    fn new_with_n_inner(seq_str: &[u8], k: usize, l: usize, canonical: bool) -> Self {
+    fn new_with_n_inner_full(seq_str: &[u8], k: usize, l: usize, canonical: bool, mode: SplitMode) -> Self {
         let fragments = crate::utils::split_on_n(seq_str, k);
         let full_storage = bitpack_fragment(seq_str);
-        let scores = syncmer_scores(l);
 
         let mut all_min_positions: Vec<(usize, usize, usize, usize)> = Vec::new();
 
         for (offset, fragment) in &fragments {
             let frag_storage = bitpack_fragment(fragment);
-            msp_minimizer_positions_into(&frag_storage, fragment.len(), k, l, *offset, scores, &mut all_min_positions);
+            msp_minimizer_positions_into(&frag_storage, fragment.len(), k, l, *offset, mode, &mut all_min_positions);
         }
 
         SuperkmersIterator {
@@ -320,18 +379,33 @@ pub struct SuperkmerExtractor {
     k: usize,
     l: usize,
     canonical: bool,
+    mode: SplitMode,
+}
+
+/// Generate extractor constructors for each (mode, canonical) combination.
+macro_rules! extractor_constructors {
+    ($($name:ident, $canonical:expr, $mode:expr;)*) => {
+        $(
+            pub fn $name(k: usize, l: usize) -> Self {
+                Self::new_inner_full(k, l, $canonical, $mode)
+            }
+        )*
+    };
 }
 
 impl SuperkmerExtractor {
-    pub fn new(k: usize, l: usize) -> Self {
-        Self::new_inner(k, l, true)
+    extractor_constructors! {
+        new,                       true,  SplitMode::Sticky;
+        non_canonical,             false, SplitMode::Sticky;
+        classical,                 true,  SplitMode::Classical;
+        classical_non_canonical,   false, SplitMode::Classical;
+        msp,                       true,  SplitMode::Msp;
+        msp_non_canonical,         false, SplitMode::Msp;
+        mspxor,                    true,  SplitMode::MspXor;
+        mspxor_non_canonical,      false, SplitMode::MspXor;
     }
 
-    pub fn non_canonical(k: usize, l: usize) -> Self {
-        Self::new_inner(k, l, false)
-    }
-
-    fn new_inner(k: usize, l: usize, canonical: bool) -> Self {
+    fn new_inner_full(k: usize, l: usize, canonical: bool, mode: SplitMode) -> Self {
         SuperkmerExtractor {
             superkmers: Vec::new(),
             min_positions: Vec::new(),
@@ -340,6 +414,7 @@ impl SuperkmerExtractor {
             k,
             l,
             canonical,
+            mode,
         }
     }
 
@@ -350,8 +425,7 @@ impl SuperkmerExtractor {
         let num_words = (seq.len() + 31) / 32;
         self.storage.resize(num_words, 0);
         crate::utils::bitpack_fragment_into(seq, &mut self.storage);
-        let scores = syncmer_scores(self.l);
-        msp_minimizer_positions_into(&self.storage, seq.len(), self.k, self.l, 0, scores, &mut self.min_positions);
+        msp_minimizer_positions_into(&self.storage, seq.len(), self.k, self.l, 0, self.mode, &mut self.min_positions);
         materialize_superkmers(&self.min_positions, self.k, self.l, self.canonical, &mut self.superkmers);
         &self.superkmers
     }
@@ -363,13 +437,12 @@ impl SuperkmerExtractor {
         let num_words = (seq.len() + 31) / 32;
         self.storage.resize(num_words, 0);
         crate::utils::bitpack_fragment_into(seq, &mut self.storage);
-        let scores = syncmer_scores(self.l);
         let fragments = crate::utils::split_on_n(seq, self.k);
         for (offset, fragment) in &fragments {
             let frag_words = (fragment.len() + 31) / 32;
             self.frag_storage.resize(frag_words, 0);
             crate::utils::bitpack_fragment_into(fragment, &mut self.frag_storage);
-            msp_minimizer_positions_into(&self.frag_storage, fragment.len(), self.k, self.l, *offset, scores, &mut self.min_positions);
+            msp_minimizer_positions_into(&self.frag_storage, fragment.len(), self.k, self.l, *offset, self.mode, &mut self.min_positions);
         }
         materialize_superkmers(&self.min_positions, self.k, self.l, self.canonical, &mut self.superkmers);
         &self.superkmers
