@@ -12,7 +12,7 @@
 //! let iter = SuperkmersIterator::non_canonical(seq, 31, 9); // forward-strand
 //! ```
 use crate::{Superkmer, SplitMode};
-use crate::iteratorsyncmers2::canonical_table;
+use crate::minimizer_core::canonical_table;
 
 const SMER_SIZE: usize = 2; // syncmer's s parameter
 

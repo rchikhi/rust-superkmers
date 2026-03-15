@@ -6,8 +6,10 @@ pub mod iterator1;
 pub mod iteratormsp;
 pub mod syncmers;
 pub mod iteratorsyncmersmsp;
+pub mod minimizer_core;
 pub mod iteratorsyncmers2;
 pub mod iteratorkmc2;
+pub mod iteratoruhs;
 #[cfg(feature = "simd-mini")]
 pub mod iteratorsimdmini;
 #[cfg(feature = "simd-mini")]
@@ -48,6 +50,7 @@ pub fn generate_canonical_table<const K: usize>() -> Vec<(u32, bool)> {
 }
 
 lazy_static! {
+    pub static ref CANONICAL_7: Vec<(u32, bool)> = generate_canonical_table::<7>();
     pub static ref CANONICAL_8: Vec<(u32, bool)> = generate_canonical_table::<8>();
     pub static ref CANONICAL_9: Vec<(u32, bool)> = generate_canonical_table::<9>();
     pub static ref CANONICAL_10: Vec<(u32, bool)> = generate_canonical_table::<10>();

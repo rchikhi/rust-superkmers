@@ -6,6 +6,7 @@ use std::io::{BufRead, BufReader};
 use rust_superkmers::iteratorsyncmers2;
 use rust_superkmers::iteratorkmc2;
 use rust_superkmers::iteratormsp;
+use rust_superkmers::iteratoruhs;
 #[cfg(feature = "simd-mini")]
 use rust_superkmers::iteratorsimdmini;
 #[cfg(feature = "simd-mini")]
@@ -29,9 +30,9 @@ fn main() {
     let method = args.get(4).map(|s| s.as_str()).unwrap_or("syncmer");
 
     let base_method = method.split(':').next().unwrap();
-    if !["syncmer", "kmc2", "msp", "simdmini", "cminim", "multimini"].contains(&base_method) {
-        eprintln!("Unknown method: {}. Use 'syncmer', 'kmc2', 'msp', 'simdmini', 'cminim', or 'multimini[:N]'.", method);
-        eprintln!("Append ':classical' or ':msp' for context-independent minimizers (e.g. 'syncmer:msp', 'simdmini:msp').");
+    if !["syncmer", "kmc2", "msp", "simdmini", "cminim", "multimini", "uhs"].contains(&base_method) {
+        eprintln!("Unknown method: {}. Use 'syncmer', 'kmc2', 'msp', 'simdmini', 'cminim', 'multimini[:N]', or 'uhs'.", method);
+        eprintln!("Append ':classical' or ':msp' or ':mspxor' for context-independent minimizers (e.g. 'syncmer:msp', 'uhs:mspxor').");
         std::process::exit(1);
     }
 
@@ -156,6 +157,13 @@ fn process_seq(seq: &[u8], k: usize, l: usize, method: &str, nb_hash: usize, spl
         #[cfg(feature = "multi-mini")]
         "multimini" => {
             let iter = iteratormultiminimizers::SuperkmersIterator::new_with_n(seq, k, l, nb_hash);
+            count_superkmers(iter, k, bucket_counts, total_kmers, total_superkmers);
+        }
+        "uhs" => {
+            let iter = match split_mode {
+                rust_superkmers::SplitMode::MspXor => iteratoruhs::SuperkmersIterator::mspxor_with_n(seq, k, l),
+                _ => iteratoruhs::SuperkmersIterator::new_with_n(seq, k, l),
+            };
             count_superkmers(iter, k, bucket_counts, total_kmers, total_superkmers);
         }
         _ => unreachable!(),

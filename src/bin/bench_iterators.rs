@@ -208,5 +208,36 @@ fn main() {
                 std::hint::black_box(sks);
             });
         }
+
+        // UHS benchmarks
+        bench("uhs (l=8)", &seq, iters, |s| {
+            let iter =
+                rust_superkmers::iteratoruhs::SuperkmersIterator::new(s, k, 8);
+            let v: Vec<_> = iter.collect();
+            std::hint::black_box(v);
+        });
+
+        bench("uhs:mspxor (l=8)", &seq, iters, |s| {
+            let iter =
+                rust_superkmers::iteratoruhs::SuperkmersIterator::mspxor(s, k, 8);
+            let v: Vec<_> = iter.collect();
+            std::hint::black_box(v);
+        });
+
+        {
+            let mut ext_uhs = rust_superkmers::iteratoruhs::SuperkmerExtractor::new(k, 8);
+            bench("uhs-ext (l=8)", &seq, iters, |s| {
+                let sks = ext_uhs.process(s);
+                std::hint::black_box(sks);
+            });
+        }
+
+        {
+            let mut ext_uhs = rust_superkmers::iteratoruhs::SuperkmerExtractor::mspxor(k, 8);
+            bench("uhs-ext:mspxor (l=8)", &seq, iters, |s| {
+                let sks = ext_uhs.process(s);
+                std::hint::black_box(sks);
+            });
+        }
     }
 }
