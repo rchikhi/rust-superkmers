@@ -12,7 +12,10 @@ fn random_dna(len: usize, seed: u64) -> Vec<u8> {
         .collect()
 }
 
-fn bench<F: FnMut(&[u8])>(name: &str, seq: &[u8], iters: u32, mut f: F) {
+fn bench<F: FnMut(&[u8])>(name: &str, seq: &[u8], iters: u32, filter: Option<&str>, mut f: F) {
+    if let Some(pat) = filter {
+        if !name.contains(pat) { return; }
+    }
     // warmup
     for _ in 0..3 {
         f(seq);
@@ -29,6 +32,8 @@ fn bench<F: FnMut(&[u8])>(name: &str, seq: &[u8], iters: u32, mut f: F) {
 
 fn main() {
     let k = 31;
+    let filter: Option<String> = std::env::args().nth(1);
+    let filter_ref = filter.as_deref();
     for &len in &[150, 10_000, 1_000_000] {
         let seq = random_dna(len, 42);
         let iters = if len <= 150 {
@@ -43,35 +48,35 @@ fn main() {
 
         println!("\n--- seq_len={} k={} ({} iters) ---", len, k, iters);
 
-        bench("syncmers2 (l=8)", &seq, iters, |s| {
+        bench("syncmers2 (l=8)", &seq, iters, filter_ref, |s| {
             let iter =
                 rust_superkmers::iteratorsyncmers2::SuperkmersIterator::new(s, k, 8);
             let v: Vec<_> = iter.collect();
             std::hint::black_box(v);
         });
 
-        bench("syncmers2:classical", &seq, iters, |s| {
+        bench("syncmers2:classical", &seq, iters, filter_ref, |s| {
             let iter =
                 rust_superkmers::iteratorsyncmers2::SuperkmersIterator::classical(s, k, 8);
             let v: Vec<_> = iter.collect();
             std::hint::black_box(v);
         });
 
-        bench("syncmers2:msp", &seq, iters, |s| {
+        bench("syncmers2:msp", &seq, iters, filter_ref, |s| {
             let iter =
                 rust_superkmers::iteratorsyncmers2::SuperkmersIterator::msp(s, k, 8);
             let v: Vec<_> = iter.collect();
             std::hint::black_box(v);
         });
 
-        bench("syncmers2:mspxor", &seq, iters, |s| {
+        bench("syncmers2:mspxor", &seq, iters, filter_ref, |s| {
             let iter =
                 rust_superkmers::iteratorsyncmers2::SuperkmersIterator::mspxor(s, k, 8);
             let v: Vec<_> = iter.collect();
             std::hint::black_box(v);
         });
 
-        bench("kmc2 (l=8)", &seq, iters, |s| {
+        bench("kmc2 (l=8)", &seq, iters, filter_ref, |s| {
             let (_, iter) =
                 rust_superkmers::iteratorkmc2::SuperkmersIterator::new(s, k, 8);
             let v: Vec<_> = iter.collect();
@@ -79,13 +84,13 @@ fn main() {
         });
 
         let dna_bytes_ref = &dna_bytes;
-        bench("syncmersmsp (l=8)", &seq, iters, |_s| {
+        bench("syncmersmsp (l=8)", &seq, iters, filter_ref, |_s| {
             let iter = rust_superkmers::iteratorsyncmersmsp::SuperkmersIterator::new(dna_bytes_ref, k, 8);
             let v: Vec<_> = iter.collect();
             std::hint::black_box(v);
         });
 
-        bench("msp (l=8)", &seq, iters, |_s| {
+        bench("msp (l=8)", &seq, iters, filter_ref, |_s| {
             let iter = rust_superkmers::iteratormsp::SuperkmersIterator::new(dna_bytes_ref, k, 8);
             let v: Vec<_> = iter.collect();
             std::hint::black_box(v);
@@ -93,35 +98,35 @@ fn main() {
 
         #[cfg(feature = "simd-mini")]
         {
-        bench("simdmini (l=9)", &seq, iters, |s| {
+        bench("simdmini (l=9)", &seq, iters, filter_ref, |s| {
             let iter =
                 rust_superkmers::iteratorsimdmini::SuperkmersIterator::new(s, k, 9);
             let v: Vec<_> = iter.collect();
             std::hint::black_box(v);
         });
 
-        bench("simdmini:classical", &seq, iters, |s| {
+        bench("simdmini:classical", &seq, iters, filter_ref, |s| {
             let iter =
                 rust_superkmers::iteratorsimdmini::SuperkmersIterator::classical(s, k, 9);
             let v: Vec<_> = iter.collect();
             std::hint::black_box(v);
         });
 
-        bench("simdmini:msp", &seq, iters, |s| {
+        bench("simdmini:msp", &seq, iters, filter_ref, |s| {
             let iter =
                 rust_superkmers::iteratorsimdmini::SuperkmersIterator::msp(s, k, 9);
             let v: Vec<_> = iter.collect();
             std::hint::black_box(v);
         });
 
-        bench("simdmini:mspxor", &seq, iters, |s| {
+        bench("simdmini:mspxor", &seq, iters, filter_ref, |s| {
             let iter =
                 rust_superkmers::iteratorsimdmini::SuperkmersIterator::mspxor(s, k, 9);
             let v: Vec<_> = iter.collect();
             std::hint::black_box(v);
         });
 
-        bench("cminim (l=9)", &seq, iters, |s| {
+        bench("cminim (l=9)", &seq, iters, filter_ref, |s| {
             let iter =
                 rust_superkmers::iteratorsimdmini_cminim::SuperkmersIterator::new(s, k, 9);
             let v: Vec<_> = iter.collect();
@@ -132,7 +137,7 @@ fn main() {
         // Syncmer detection only (no superkmer extraction)
         {
             let scores = rust_superkmers::iteratorsyncmers2::mspxor_syncmer_scores(8);
-            bench("syncmers2 scores-only l=8", &seq, iters, |s| {
+            bench("syncmers2 scores-only l=8", &seq, iters, filter_ref, |s| {
                 let storage = rust_superkmers::utils::bitpack_fragment(s);
                 let mut total = 0usize;
                 for i in 0..s.len().saturating_sub(7) {
@@ -144,7 +149,7 @@ fn main() {
 
         {
             let scores = rust_superkmers::iteratorsyncmers2::mspxor_syncmer_scores(9);
-            bench("syncmers2 scores-only l=9", &seq, iters, |s| {
+            bench("syncmers2 scores-only l=9", &seq, iters, filter_ref, |s| {
                 let storage = rust_superkmers::utils::bitpack_fragment(s);
                 let mut total = 0usize;
                 for i in 0..s.len().saturating_sub(8) {
@@ -158,7 +163,7 @@ fn main() {
         {
             use simd_minimizers::packed_seq::AsciiSeq;
             let mut positions = Vec::new();
-            bench("simdmini SIMD-detect l=9", &seq, iters, |s| {
+            bench("simdmini SIMD-detect l=9", &seq, iters, filter_ref, |s| {
                 positions.clear();
                 simd_minimizers::canonical_closed_syncmers(2, 8)
                     .run(AsciiSeq(s), &mut positions);
@@ -169,7 +174,7 @@ fn main() {
         // Extractor benchmarks (reusable buffers, amortized across reads)
         {
             let mut ext2 = rust_superkmers::iteratorsyncmers2::SuperkmerExtractor::new(k, 8);
-            bench("syncmers2-ext (l=8)", &seq, iters, |s| {
+            bench("syncmers2-ext (l=8)", &seq, iters, filter_ref, |s| {
                 let sks = ext2.process(s);
                 std::hint::black_box(sks);
             });
@@ -177,7 +182,7 @@ fn main() {
 
         {
             let mut ext2 = rust_superkmers::iteratorsyncmers2::SuperkmerExtractor::mspxor(k, 8);
-            bench("syncmers2-ext:mspxor", &seq, iters, |s| {
+            bench("syncmers2-ext:mspxor", &seq, iters, filter_ref, |s| {
                 let sks = ext2.process(s);
                 std::hint::black_box(sks);
             });
@@ -185,7 +190,7 @@ fn main() {
 
         {
             let mut ext2 = rust_superkmers::iteratorsyncmers2::SuperkmerExtractor::mspxor(k, 9);
-            bench("syncmers2-ext:mspxor l=9", &seq, iters, |s| {
+            bench("syncmers2-ext:mspxor l=9", &seq, iters, filter_ref, |s| {
                 let sks = ext2.process(s);
                 std::hint::black_box(sks);
             });
@@ -194,7 +199,7 @@ fn main() {
         #[cfg(feature = "simd-mini")]
         {
             let mut ext_simd = rust_superkmers::iteratorsimdmini::SuperkmerExtractor::new(k, 9);
-            bench("simdmini-ext (l=9)", &seq, iters, |s| {
+            bench("simdmini-ext (l=9)", &seq, iters, filter_ref, |s| {
                 let sks = ext_simd.process(s);
                 std::hint::black_box(sks);
             });
@@ -203,21 +208,21 @@ fn main() {
         #[cfg(feature = "simd-mini")]
         {
             let mut ext_simd = rust_superkmers::iteratorsimdmini::SuperkmerExtractor::mspxor(k, 9);
-            bench("simdmini-ext:mspxor", &seq, iters, |s| {
+            bench("simdmini-ext:mspxor", &seq, iters, filter_ref, |s| {
                 let sks = ext_simd.process(s);
                 std::hint::black_box(sks);
             });
         }
 
         // UHS benchmarks
-        bench("uhs (l=8)", &seq, iters, |s| {
+        bench("uhs (l=8)", &seq, iters, filter_ref, |s| {
             let iter =
                 rust_superkmers::iteratoruhs::SuperkmersIterator::new(s, k, 8);
             let v: Vec<_> = iter.collect();
             std::hint::black_box(v);
         });
 
-        bench("uhs:mspxor (l=8)", &seq, iters, |s| {
+        bench("uhs:mspxor (l=8)", &seq, iters, filter_ref, |s| {
             let iter =
                 rust_superkmers::iteratoruhs::SuperkmersIterator::mspxor(s, k, 8);
             let v: Vec<_> = iter.collect();
@@ -226,7 +231,7 @@ fn main() {
 
         {
             let mut ext_uhs = rust_superkmers::iteratoruhs::SuperkmerExtractor::new(k, 8);
-            bench("uhs-ext (l=8)", &seq, iters, |s| {
+            bench("uhs-ext (l=8)", &seq, iters, filter_ref, |s| {
                 let sks = ext_uhs.process(s);
                 std::hint::black_box(sks);
             });
@@ -234,7 +239,7 @@ fn main() {
 
         {
             let mut ext_uhs = rust_superkmers::iteratoruhs::SuperkmerExtractor::mspxor(k, 8);
-            bench("uhs-ext:mspxor (l=8)", &seq, iters, |s| {
+            bench("uhs-ext:mspxor (l=8)", &seq, iters, filter_ref, |s| {
                 let sks = ext_uhs.process(s);
                 std::hint::black_box(sks);
             });

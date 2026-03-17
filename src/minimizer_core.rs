@@ -54,11 +54,43 @@ pub fn canonical_table(l: usize) -> &'static [(u32, bool)] {
     }
 }
 
-/// Two-pass sliding window minimum via monotonic deque.
-/// Pass 1: precompute all l-mer scores into `scores_buf`.
-/// Pass 2: sliding window minimum via deque (amortized O(1) per step, no rescans).
-/// CLASSICAL=true: rightmost wins on tie (pop back on >=).
-/// CLASSICAL=false: leftmost wins on tie (pop back on >).
+/// Pack (score, position) into a single usize for block-decomposition comparison.
+/// High 32 bits: compressed score. Low 32 bits: position (or complement for CLASSICAL).
+/// Comparing packed values directly gives correct minimizer ordering.
+#[inline(always)]
+fn pack_score_pos<const CLASSICAL: bool>(score: usize, pos: usize) -> usize {
+    // Compress score to 32 bits: syncmer bit (bit 32 of score) → bit 31, low 31 bits of hash.
+    // For mspxor l=8: 16 bits of tiebreaker entropy (full resolution).
+    // For mspxor l=9: 18 bits of tiebreaker entropy (full resolution).
+    // For binary scores (0/1): maps to 0 and 1 in score32.
+    let score32 = ((score >> 32) << 31) | (score & 0x7FFF_FFFF);
+    if CLASSICAL {
+        // Rightmost wins on tie: complement position so min() picks higher pos
+        (score32 << 32) | (0xFFFF_FFFF - pos)
+    } else {
+        // Leftmost wins on tie: lower position = lower packed value
+        (score32 << 32) | pos
+    }
+}
+
+/// Extract position from a packed (score, position) value.
+#[inline(always)]
+fn unpack_pos<const CLASSICAL: bool>(packed: usize) -> usize {
+    if CLASSICAL {
+        0xFFFF_FFFF - (packed & 0xFFFF_FFFF)
+    } else {
+        packed & 0xFFFF_FFFF
+    }
+}
+
+/// Block-decomposition sliding window minimum (no deque).
+///
+/// Divides positions into blocks of size w. Precomputes prefix-min and suffix-min
+/// within each block. Window minimum = min(suffix[i], prefix[i+w-1]).
+/// All passes are sequential reads/writes — no random access, no unpredictable branches.
+///
+/// CLASSICAL=true: rightmost wins on tie.
+/// CLASSICAL=false: leftmost wins on tie.
 ///
 /// Emits (kmer_start, minimizer_pos, minimizer_kmer, fragment_end) tuples.
 /// All positions are absolute (offset already added).
@@ -72,75 +104,75 @@ pub fn minimizer_positions_deque<const CLASSICAL: bool>(
     if frag_len < k { return; }
 
     let num_lmers = frag_len - l + 1;
-    let w = k - l + 1; // number of l-mers per k-mer window
+    let w = k - l + 1;
+    let num_kmers = frag_len - k + 1;
+    let mask = (1usize << (l * 2)) - 1;
 
-    // Ensure buffers have enough capacity; we index by position directly.
+    // Reuse buffers: scores_buf → packed values then prefix_min, deque → suffix_min
     if scores_buf.len() < num_lmers { scores_buf.resize(num_lmers, 0); }
     if deque.len() < num_lmers { deque.resize(num_lmers, 0); }
-    let sc = &mut scores_buf[..num_lmers];
-    let dq = &mut deque[..num_lmers];
 
-    // Pass 1: precompute all l-mer scores via rolling kmer
-    let mask = (1usize << (l * 2)) - 1;
-    let mut rolling = get_kmer_value(storage, 0, l);
-    sc[0] = scores[rolling];
-    for pos in 1..num_lmers {
-        let new_base = get_base(storage, pos + l - 1);
-        rolling = ((rolling << 2) | new_base) & mask;
-        sc[pos] = scores[rolling];
+    // Pass 1: compute packed (score, position) values via rolling kmer
+    unsafe {
+        let mut rolling = get_kmer_value(storage, 0, l);
+        *scores_buf.get_unchecked_mut(0) = pack_score_pos::<CLASSICAL>(*scores.get_unchecked(rolling), 0);
+        for pos in 1..num_lmers {
+            let new_base = get_base(storage, pos + l - 1);
+            rolling = ((rolling << 2) | new_base) & mask;
+            *scores_buf.get_unchecked_mut(pos) = pack_score_pos::<CLASSICAL>(*scores.get_unchecked(rolling), pos);
+        }
     }
 
-    // Pass 2: monotonic deque sliding window minimum
-    let mut head = 0usize;
-    let mut tail = 0usize;
-
-    // Fill first window (l-mer positions 0..w-1)
-    for pos in 0..w {
-        while tail > head {
-            let back = dq[tail - 1];
-            let dominated = if CLASSICAL {
-                sc[back] >= sc[pos]
-            } else {
-                sc[back] > sc[pos]
-            };
-            if dominated { tail -= 1; } else { break; }
+    // Pass 2: build suffix_min (right-to-left within each block of size w)
+    {
+        let mut block_start = 0;
+        while block_start < num_lmers {
+            let block_end = std::cmp::min(block_start + w, num_lmers);
+            unsafe {
+                *deque.get_unchecked_mut(block_end - 1) = *scores_buf.get_unchecked(block_end - 1);
+                for i in (block_start..block_end - 1).rev() {
+                    let cur = *scores_buf.get_unchecked(i);
+                    let next = *deque.get_unchecked(i + 1);
+                    *deque.get_unchecked_mut(i) = std::cmp::min(cur, next);
+                }
+            }
+            block_start += w;
         }
-        dq[tail] = pos;
-        tail += 1;
     }
 
-    // Emit first superkmer
-    let mut prev_min_pos = dq[head];
-    let min_kmer = get_kmer_value(storage, prev_min_pos, l);
-    min_positions.push((offset, prev_min_pos + offset, min_kmer, frag_end));
-
-    // Slide: k-mer at position i covers l-mer positions i..i+w-1
-    for i in 1..(frag_len - k + 1) {
-        let new_lmer_pos = i + w - 1;
-
-        // Pop front if it fell off the left edge
-        while dq[head] < i {
-            head += 1;
+    // Pass 3: build prefix_min in-place over scores_buf (left-to-right within each block)
+    {
+        let mut block_start = 0;
+        while block_start < num_lmers {
+            let block_end = std::cmp::min(block_start + w, num_lmers);
+            for i in block_start + 1..block_end {
+                unsafe {
+                    let prev = *scores_buf.get_unchecked(i - 1);
+                    let cur = *scores_buf.get_unchecked(i);
+                    *scores_buf.get_unchecked_mut(i) = std::cmp::min(prev, cur);
+                }
+            }
+            block_start += w;
         }
+    }
 
-        // Push new element, popping dominated elements from back
-        while tail > head {
-            let back = dq[tail - 1];
-            let dominated = if CLASSICAL {
-                sc[back] >= sc[new_lmer_pos]
-            } else {
-                sc[back] > sc[new_lmer_pos]
-            };
-            if dominated { tail -= 1; } else { break; }
-        }
-        dq[tail] = new_lmer_pos;
-        tail += 1;
+    // Pass 4: query — window min = min(suffix[i], prefix[i+w-1])
+    unsafe {
+        let first = std::cmp::min(*deque.get_unchecked(0), *scores_buf.get_unchecked(w - 1));
+        let mut prev_min_pos = unpack_pos::<CLASSICAL>(first);
+        let min_kmer = get_kmer_value(storage, prev_min_pos, l);
+        min_positions.push((offset, prev_min_pos + offset, min_kmer, frag_end));
 
-        let cur_min_pos = dq[head];
-        if cur_min_pos != prev_min_pos {
-            let min_kmer = get_kmer_value(storage, cur_min_pos, l);
-            min_positions.push((i + offset, cur_min_pos + offset, min_kmer, frag_end));
-            prev_min_pos = cur_min_pos;
+        for i in 1..num_kmers {
+            let s = *deque.get_unchecked(i);
+            let p = *scores_buf.get_unchecked(i + w - 1);
+            let window_min = std::cmp::min(s, p);
+            let cur_min_pos = unpack_pos::<CLASSICAL>(window_min);
+            if cur_min_pos != prev_min_pos {
+                let min_kmer = get_kmer_value(storage, cur_min_pos, l);
+                min_positions.push((i + offset, cur_min_pos + offset, min_kmer, frag_end));
+                prev_min_pos = cur_min_pos;
+            }
         }
     }
 }

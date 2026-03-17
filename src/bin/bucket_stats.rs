@@ -17,10 +17,26 @@ use rust_superkmers::iteratormultiminimizers;
 fn main() {
     let args: Vec<String> = env::args().collect();
     if args.len() < 2 {
-        eprintln!("Usage: {} <genome.fa> [k] [l] [method]", args[0]);
+        eprintln!("Usage: {} <genome.fa> [k] [l] [method[:mode]]", args[0]);
         eprintln!("  k: kmer length (default 31)");
-        eprintln!("  l: minimizer length (default 8)");
-        eprintln!("  method: 'syncmer' (default), 'kmc2', 'msp', 'simdmini', or 'multimini[:N]' (N=nb_hash, default 2)");
+        eprintln!("  l: minimizer length (default: 8 for syncmer/kmc2/msp/uhs, 9 for simdmini/cminim/multimini)");
+        eprintln!();
+        eprintln!("Methods:");
+        eprintln!("  syncmer      Closed syncmer minimizers (default)");
+        eprintln!("  uhs          Universal Hitting Set (ry-alphabet patterns, Martin Frith)");
+        eprintln!("  kmc2         KMC2 disqualification-based minimizers");
+        eprintln!("  msp          Lexicographic (MSP) minimizers");
+        eprintln!("  simdmini     SIMD-accelerated closed syncmers (requires odd l, feature: simd-mini)");
+        eprintln!("  cminim       Canonical minimizers via simd-minimizers (requires odd l, feature: simd-mini)");
+        eprintln!("  multimini[:N] Multi-minimizer with N hash functions (default N=2, feature: multi-mini)");
+        eprintln!();
+        eprintln!("Split modes (append with ':', e.g. 'syncmer:mspxor'):");
+        eprintln!("  (default)    Sticky — context-dependent, fewest superkmers");
+        eprintln!("  classical    Rightmost wins on tie — context-dependent");
+        eprintln!("  msp          Leftmost wins on tie — context-independent");
+        eprintln!("  mspxor       XOR-hashed canonical scores — context-independent, uniform buckets");
+        eprintln!();
+        eprintln!("Supported: syncmer, uhs, simdmini support all split modes. kmc2/msp/cminim/multimini ignore mode.");
         std::process::exit(1);
     }
 
@@ -31,8 +47,7 @@ fn main() {
 
     let base_method = method.split(':').next().unwrap();
     if !["syncmer", "kmc2", "msp", "simdmini", "cminim", "multimini", "uhs"].contains(&base_method) {
-        eprintln!("Unknown method: {}. Use 'syncmer', 'kmc2', 'msp', 'simdmini', 'cminim', 'multimini[:N]', or 'uhs'.", method);
-        eprintln!("Append ':classical' or ':msp' or ':mspxor' for context-independent minimizers (e.g. 'syncmer:msp', 'uhs:mspxor').");
+        eprintln!("Unknown method: '{}'. Run with no arguments to see usage.", method);
         std::process::exit(1);
     }
 
