@@ -44,6 +44,7 @@ fn main() {
     let k: usize = args.get(2).and_then(|s| s.parse().ok()).unwrap_or(31);
     let l_arg: usize = args.get(3).and_then(|s| s.parse().ok()).unwrap_or(0); // 0 = auto
     let method = args.get(4).map(|s| s.as_str()).unwrap_or("syncmer");
+    let s_param: usize = args.get(5).and_then(|s| s.parse().ok()).unwrap_or(2);
 
     let base_method = method.split(':').next().unwrap();
     if !["syncmer", "kmc2", "msp", "simdmini", "cminim", "multimini", "uhs"].contains(&base_method) {
@@ -80,9 +81,20 @@ fn main() {
     // Read FASTA once
     let sequences = read_fasta(fasta_path);
 
+    // Generate custom mspxor scores if s != 2 and method is syncmer
+    let custom_scores: Option<Vec<usize>> = if base_method == "syncmer" && s_param != 2 {
+        eprintln!("Generating syncmer mspxor scores with s={}...", s_param);
+        Some(iteratorsyncmers2::generate_mspxor_syncmer_scores_with_s(l, s_param))
+    } else {
+        None
+    };
+    let custom_scores_ref = custom_scores.as_deref();
+
     for &nb_hash in &multimini_nb_hashes {
         if base_method == "multimini" {
             eprintln!("Running k={}  l={}  method=multimini  nb_hash={}", k, l, nb_hash);
+        } else if custom_scores_ref.is_some() {
+            eprintln!("Running k={}  l={}  s={}  method={}", k, l, s_param, method);
         } else {
             eprintln!("Running k={}  l={}  method={}", k, l, method);
         }
@@ -92,7 +104,7 @@ fn main() {
         let mut total_superkmers: u64 = 0;
 
         for (i, seq) in sequences.iter().enumerate() {
-            process_seq(seq, k, l, method, nb_hash, split_mode, &mut bucket_counts, &mut total_kmers, &mut total_superkmers);
+            process_seq(seq, k, l, method, nb_hash, split_mode, &mut bucket_counts, &mut total_kmers, &mut total_superkmers, custom_scores_ref);
             if (i + 1) % 10 == 0 {
                 eprintln!("  processed {} sequences, {} superkmers, {} kmers so far", i + 1, total_superkmers, total_kmers);
             }
@@ -134,17 +146,36 @@ fn read_fasta(path: &str) -> Vec<Vec<u8>> {
     sequences
 }
 
-fn process_seq(seq: &[u8], k: usize, l: usize, method: &str, nb_hash: usize, split_mode: rust_superkmers::SplitMode, bucket_counts: &mut HashMap<u32, u64>, total_kmers: &mut u64, total_superkmers: &mut u64) {
+fn process_seq(seq: &[u8], k: usize, l: usize, method: &str, nb_hash: usize, split_mode: rust_superkmers::SplitMode, bucket_counts: &mut HashMap<u32, u64>, total_kmers: &mut u64, total_superkmers: &mut u64, custom_scores: Option<&[usize]>) {
     let base_method = method.split(':').next().unwrap();
     match base_method {
         "syncmer" => {
-            let iter = match split_mode {
-                rust_superkmers::SplitMode::Classical => iteratorsyncmers2::SuperkmersIterator::classical_with_n(seq, k, l),
-                rust_superkmers::SplitMode::Msp => iteratorsyncmers2::SuperkmersIterator::msp_with_n(seq, k, l),
-                rust_superkmers::SplitMode::MspXor => iteratorsyncmers2::SuperkmersIterator::mspxor_with_n(seq, k, l),
-                rust_superkmers::SplitMode::Sticky => iteratorsyncmers2::SuperkmersIterator::new_with_n(seq, k, l),
-            };
-            count_superkmers(iter, k, bucket_counts, total_kmers, total_superkmers);
+            if let Some(scores) = custom_scores {
+                // Custom s parameter: use minimizer_core directly with provided scores
+                let fragments = rust_superkmers::utils::split_on_n(seq, k);
+                let full_storage = rust_superkmers::utils::bitpack_fragment(seq);
+                let mut min_positions = Vec::new();
+                let mut scores_buf = Vec::new();
+                let mut deque_buf = Vec::new();
+                let mut superkmers = Vec::new();
+                for (offset, fragment) in &fragments {
+                    let frag_storage = rust_superkmers::utils::bitpack_fragment(fragment);
+                    rust_superkmers::minimizer_core::minimizer_positions_deque::<false>(
+                        &frag_storage, fragment.len(), k, l, *offset,
+                        scores, &mut min_positions, &mut scores_buf, &mut deque_buf,
+                    );
+                }
+                rust_superkmers::minimizer_core::materialize_superkmers(&min_positions, k, l, true, &mut superkmers);
+                count_superkmers(superkmers.into_iter(), k, bucket_counts, total_kmers, total_superkmers);
+            } else {
+                let iter = match split_mode {
+                    rust_superkmers::SplitMode::Classical => iteratorsyncmers2::SuperkmersIterator::classical_with_n(seq, k, l),
+                    rust_superkmers::SplitMode::Msp => iteratorsyncmers2::SuperkmersIterator::msp_with_n(seq, k, l),
+                    rust_superkmers::SplitMode::MspXor => iteratorsyncmers2::SuperkmersIterator::mspxor_with_n(seq, k, l),
+                    rust_superkmers::SplitMode::Sticky => iteratorsyncmers2::SuperkmersIterator::new_with_n(seq, k, l),
+                };
+                count_superkmers(iter, k, bucket_counts, total_kmers, total_superkmers);
+            }
         }
         "kmc2" => {
             let (_storage, iter) = iteratorkmc2::SuperkmersIterator::new_with_n(seq, k, l);

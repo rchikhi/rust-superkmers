@@ -55,27 +55,31 @@ pub fn mspxor_syncmer_scores(l: usize) -> &'static [usize] {
 }
 
 
+
 fn generate_syncmer_scores<const K: usize>() -> Vec<usize> {
-    let mut scores = vec![0usize; 1 << (2 * K)];
-    for kmer_int in 0..(1 << (2 * K)) {
-        let kmer_bytes = {
-            let mut bytes = [0u8; K];
-            for (i, byte) in bytes.iter_mut().enumerate() {
-                *byte = match (kmer_int >> (2 * (K - 1 - i))) & 3 {
-                    0 => b'A',
-                    1 => b'C',
-                    2 => b'G',
-                    3 => b'T',
-                    _ => unreachable!(),
-                };
-            }
-            bytes
-        };
-        let syncmer = crate::syncmers::find_syncmers(K as usize, S, &[0, K - S], None, &kmer_bytes);
+    generate_syncmer_scores_with_s(K, S)
+}
+
+/// Generate syncmer scores for arbitrary (l, s) parameters.
+pub fn generate_syncmer_scores_with_s(l: usize, s: usize) -> Vec<usize> {
+    let num_lmers = 1 << (2 * l);
+    let mut scores = vec![0usize; num_lmers];
+    let mut kmer_bytes = vec![0u8; l];
+    for kmer_int in 0..num_lmers {
+        for (i, byte) in kmer_bytes.iter_mut().enumerate() {
+            *byte = match (kmer_int >> (2 * (l - 1 - i))) & 3 {
+                0 => b'A',
+                1 => b'C',
+                2 => b'G',
+                3 => b'T',
+                _ => unreachable!(),
+            };
+        }
+        let syncmer = crate::syncmers::find_syncmers(l, s, &[0, l - s], None, &kmer_bytes);
         scores[kmer_int] = syncmer.is_empty() as usize;
     }
-    scores[0] = 1; // Demote all-A l-mer: valid syncmer but causes hot buckets
-    scores[(1 << (2 * K)) - 1] = 1; // Demote all-T l-mer (RC of all-A, same canonical bucket)
+    scores[0] = 1; // Demote all-A l-mer
+    scores[num_lmers - 1] = 1; // Demote all-T l-mer
     scores
 }
 
@@ -109,6 +113,20 @@ fn generate_mspxor_syncmer_scores<const K: usize>() -> Vec<usize> {
     }
     scores
 }
+
+/// Generate mspxor scores with arbitrary (l, s) parameters.
+pub fn generate_mspxor_syncmer_scores_with_s(l: usize, s: usize) -> Vec<usize> {
+    let base = generate_syncmer_scores_with_s(l, s);
+    let canon_table = canonical_table(l);
+    let num_lmers = 1 << (2 * l);
+    let mut scores = vec![0usize; num_lmers];
+    for fwd in 0..num_lmers {
+        let (canon_val, _) = canon_table[fwd];
+        scores[fwd] = (base[canon_val as usize] << 32) | (canon_val as usize ^ XOR_CONSTANT);
+    }
+    scores
+}
+
 
 use crate::utils::bitpack_fragment;
 
