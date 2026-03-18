@@ -90,13 +90,20 @@ fn main() {
     };
     let custom_scores_ref = custom_scores.as_deref();
 
+    let mode_str = match split_mode {
+        rust_superkmers::SplitMode::Sticky => "sticky",
+        rust_superkmers::SplitMode::Classical => "classical",
+        rust_superkmers::SplitMode::Msp => "msp",
+        rust_superkmers::SplitMode::MspXor => "mspxor",
+    };
+
     for &nb_hash in &multimini_nb_hashes {
         if base_method == "multimini" {
             eprintln!("Running k={}  l={}  method=multimini  nb_hash={}", k, l, nb_hash);
         } else if custom_scores_ref.is_some() {
-            eprintln!("Running k={}  l={}  s={}  method={}", k, l, s_param, method);
+            eprintln!("Running k={}  l={}  s={}  method={}  mode={}", k, l, s_param, base_method, mode_str);
         } else {
-            eprintln!("Running k={}  l={}  method={}", k, l, method);
+            eprintln!("Running k={}  l={}  method={}  mode={}", k, l, base_method, mode_str);
         }
 
         let mut bucket_counts: HashMap<u32, u64> = HashMap::new();

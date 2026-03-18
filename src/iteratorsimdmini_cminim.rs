@@ -82,23 +82,29 @@ fn emit_superkmers(
 }
 
 /// Reusable superkmer extractor. Create once, call `process()` per read.
+/// Pre-creates the NtHasher and SIMD cache to avoid per-call overhead.
 pub struct SuperkmerExtractor {
     superkmers: Vec<Superkmer>,
     storage: Vec<u64>,
     min_pos: Vec<u32>,
     sk_pos: Vec<u32>,
+    hasher: simd_minimizers::seq_hash::NtHasher<true>,
+    cache: simd_minimizers::Cache,
     k: usize,
     l: usize,
+    w: usize,
     canonical: bool,
 }
 
 impl SuperkmerExtractor {
     pub fn new(k: usize, l: usize) -> Self {
-        Self { superkmers: Vec::new(), storage: Vec::new(), min_pos: Vec::new(), sk_pos: Vec::new(), k, l, canonical: true }
+        let w = k - l + 1;
+        Self { superkmers: Vec::new(), storage: Vec::new(), min_pos: Vec::new(), sk_pos: Vec::new(), hasher: simd_minimizers::seq_hash::NtHasher::new(l), cache: simd_minimizers::Cache::default(), k, l, w, canonical: true }
     }
 
     pub fn non_canonical(k: usize, l: usize) -> Self {
-        Self { superkmers: Vec::new(), storage: Vec::new(), min_pos: Vec::new(), sk_pos: Vec::new(), k, l, canonical: false }
+        let w = k - l + 1;
+        Self { superkmers: Vec::new(), storage: Vec::new(), min_pos: Vec::new(), sk_pos: Vec::new(), hasher: simd_minimizers::seq_hash::NtHasher::new(l), cache: simd_minimizers::Cache::default(), k, l, w, canonical: false }
     }
 
     pub fn process(&mut self, seq: &[u8]) -> &[Superkmer] {
@@ -107,12 +113,12 @@ impl SuperkmerExtractor {
         let num_words = (seq.len() + 31) / 32;
         self.storage.resize(num_words, 0);
         crate::utils::bitpack_fragment_into(seq, &mut self.storage);
-        let w = self.k - self.l + 1;
         self.min_pos.clear();
         self.sk_pos.clear();
-        simd_minimizers::canonical_minimizers(self.l, w)
+        simd_minimizers::canonical_minimizers(self.l, self.w)
+            .hasher(&self.hasher)
             .super_kmers(&mut self.sk_pos)
-            .run(AsciiSeq(seq), &mut self.min_pos);
+            .run_with_buf(AsciiSeq(seq), &mut self.min_pos, &mut self.cache);
         emit_superkmers(seq, self.k, self.l, 0, self.canonical, &self.min_pos, &self.sk_pos, &mut self.superkmers);
         &self.superkmers
     }
@@ -124,13 +130,13 @@ impl SuperkmerExtractor {
         self.storage.resize(num_words, 0);
         crate::utils::bitpack_fragment_into(seq, &mut self.storage);
         let fragments = crate::utils::split_on_n(seq, self.k);
-        let w = self.k - self.l + 1;
         for (offset, fragment) in &fragments {
             self.min_pos.clear();
             self.sk_pos.clear();
-            simd_minimizers::canonical_minimizers(self.l, w)
+            simd_minimizers::canonical_minimizers(self.l, self.w)
+                .hasher(&self.hasher)
                 .super_kmers(&mut self.sk_pos)
-                .run(AsciiSeq(fragment), &mut self.min_pos);
+                .run_with_buf(AsciiSeq(fragment), &mut self.min_pos, &mut self.cache);
             emit_superkmers(fragment, self.k, self.l, *offset, self.canonical, &self.min_pos, &self.sk_pos, &mut self.superkmers);
         }
         &self.superkmers
