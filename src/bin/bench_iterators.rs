@@ -144,7 +144,7 @@ fn main() {
                 let storage = rust_superkmers::utils::bitpack_fragment(s);
                 let mut total = 0usize;
                 for i in 0..s.len().saturating_sub(7) {
-                    total += scores[rust_superkmers::iteratorsyncmers2::get_kmer_value(&storage, i, 8)];
+                    total += scores[rust_superkmers::iteratorsyncmers2::get_kmer_value(&storage, i, 8)] as usize;
                 }
                 std::hint::black_box(total);
             });
@@ -156,7 +156,7 @@ fn main() {
                 let storage = rust_superkmers::utils::bitpack_fragment(s);
                 let mut total = 0usize;
                 for i in 0..s.len().saturating_sub(8) {
-                    total += scores[rust_superkmers::iteratorsyncmers2::get_kmer_value(&storage, i, 9)];
+                    total += scores[rust_superkmers::iteratorsyncmers2::get_kmer_value(&storage, i, 9)] as usize;
                 }
                 std::hint::black_box(total);
             });

@@ -82,7 +82,7 @@ fn main() {
     let sequences = read_fasta(fasta_path);
 
     // Generate custom mspxor scores if s != 2 and method is syncmer
-    let custom_scores: Option<Vec<usize>> = if base_method == "syncmer" && s_param != 2 {
+    let custom_scores: Option<Vec<rust_superkmers::iteratorsyncmers2::ScoreType>> = if base_method == "syncmer" && s_param != 2 {
         eprintln!("Generating syncmer mspxor scores with s={}...", s_param);
         Some(iteratorsyncmers2::generate_mspxor_syncmer_scores_with_s(l, s_param))
     } else {
@@ -146,7 +146,7 @@ fn read_fasta(path: &str) -> Vec<Vec<u8>> {
     sequences
 }
 
-fn process_seq(seq: &[u8], k: usize, l: usize, method: &str, nb_hash: usize, split_mode: rust_superkmers::SplitMode, bucket_counts: &mut HashMap<u32, u64>, total_kmers: &mut u64, total_superkmers: &mut u64, custom_scores: Option<&[usize]>) {
+fn process_seq(seq: &[u8], k: usize, l: usize, method: &str, nb_hash: usize, split_mode: rust_superkmers::SplitMode, bucket_counts: &mut HashMap<u32, u64>, total_kmers: &mut u64, total_superkmers: &mut u64, custom_scores: Option<&[rust_superkmers::iteratorsyncmers2::ScoreType]>) {
     let base_method = method.split(':').next().unwrap();
     match base_method {
         "syncmer" => {
@@ -160,7 +160,7 @@ fn process_seq(seq: &[u8], k: usize, l: usize, method: &str, nb_hash: usize, spl
                 let mut superkmers = Vec::new();
                 for (offset, fragment) in &fragments {
                     let frag_storage = rust_superkmers::utils::bitpack_fragment(fragment);
-                    rust_superkmers::minimizer_core::minimizer_positions_deque::<false>(
+                    rust_superkmers::minimizer_core::minimizer_positions_deque::<false, _>(
                         &frag_storage, fragment.len(), k, l, *offset,
                         scores, &mut min_positions, &mut scores_buf, &mut deque_buf,
                     );

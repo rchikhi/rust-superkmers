@@ -73,14 +73,16 @@ fn is_uhs_pattern(ry: usize, l: usize) -> bool {
     }
 }
 
+use crate::iteratorsyncmers2::{ScoreType, compress_score};
+
 /// Generate UHS binary scores: 0 = UHS member (good minimizer), 1 = non-member.
 /// An l-mer is valid if either its forward OR reverse-complement ry pattern is
 /// in the UHS. This ensures fwd/RC pairs get the same priority, which is required
 /// for canonical minimizer selection.
-fn generate_uhs_scores(l: usize) -> Vec<usize> {
+fn generate_uhs_scores(l: usize) -> Vec<ScoreType> {
     let num_lmers = 1 << (2 * l);
     let canon_table = canonical_table(l);
-    let mut scores = vec![1usize; num_lmers];
+    let mut scores = vec![1 as ScoreType; num_lmers];
 
     for lmer in 0..num_lmers {
         let ry_fwd = lmer_to_ry(lmer, l);
@@ -110,30 +112,30 @@ fn generate_uhs_scores(l: usize) -> Vec<usize> {
 }
 
 /// Generate UHS scores with XOR tiebreaker for context-independent splitting.
-/// Composite: (uhs_priority << 32) | (canonical_value ^ XOR_CONSTANT).
-fn generate_uhs_mspxor_scores(l: usize) -> Vec<usize> {
+/// Pre-compressed composite: (uhs_priority, canonical_value ^ XOR_CONSTANT).
+fn generate_uhs_mspxor_scores(l: usize) -> Vec<ScoreType> {
     let base = generate_uhs_scores(l);
     let canon_table = canonical_table(l);
     let num_lmers = 1 << (2 * l);
-    let mut scores = vec![0usize; num_lmers];
+    let mut scores = vec![0 as ScoreType; num_lmers];
     const XOR_CONSTANT: usize = 0xACE5_ACE5;
     for fwd in 0..num_lmers {
         let (canon_val, _) = canon_table[fwd];
-        scores[fwd] = (base[canon_val as usize] << 32) | (canon_val as usize ^ XOR_CONSTANT);
+        scores[fwd] = compress_score(base[canon_val as usize], canon_val as usize ^ XOR_CONSTANT);
     }
     scores
 }
 
 lazy_static! {
-    static ref UHS_SCORES_7: Vec<usize> = generate_uhs_scores(7);
-    static ref UHS_SCORES_8: Vec<usize> = generate_uhs_scores(8);
-    static ref UHS_SCORES_9: Vec<usize> = generate_uhs_scores(9);
-    static ref UHS_MSPXOR_SCORES_7: Vec<usize> = generate_uhs_mspxor_scores(7);
-    static ref UHS_MSPXOR_SCORES_8: Vec<usize> = generate_uhs_mspxor_scores(8);
-    static ref UHS_MSPXOR_SCORES_9: Vec<usize> = generate_uhs_mspxor_scores(9);
+    static ref UHS_SCORES_7: Vec<ScoreType> = generate_uhs_scores(7);
+    static ref UHS_SCORES_8: Vec<ScoreType> = generate_uhs_scores(8);
+    static ref UHS_SCORES_9: Vec<ScoreType> = generate_uhs_scores(9);
+    static ref UHS_MSPXOR_SCORES_7: Vec<ScoreType> = generate_uhs_mspxor_scores(7);
+    static ref UHS_MSPXOR_SCORES_8: Vec<ScoreType> = generate_uhs_mspxor_scores(8);
+    static ref UHS_MSPXOR_SCORES_9: Vec<ScoreType> = generate_uhs_mspxor_scores(9);
 }
 
-fn uhs_scores(l: usize) -> &'static [usize] {
+fn uhs_scores(l: usize) -> &'static [ScoreType] {
     match l {
         7 => &UHS_SCORES_7[..],
         8 => &UHS_SCORES_8[..],
@@ -142,7 +144,7 @@ fn uhs_scores(l: usize) -> &'static [usize] {
     }
 }
 
-fn uhs_mspxor_scores(l: usize) -> &'static [usize] {
+fn uhs_mspxor_scores(l: usize) -> &'static [ScoreType] {
     match l {
         7 => &UHS_MSPXOR_SCORES_7[..],
         8 => &UHS_MSPXOR_SCORES_8[..],
@@ -164,15 +166,15 @@ fn uhs_positions_into(
         }
         SplitMode::Classical => {
             let scores = uhs_scores(l);
-            minimizer_positions_deque::<true>(storage, frag_len, k, l, offset, scores, min_positions, scores_buf, deque);
+            minimizer_positions_deque::<true, _>(storage, frag_len, k, l, offset, scores, min_positions, scores_buf, deque);
         }
         SplitMode::MspXor => {
             let scores = uhs_mspxor_scores(l);
-            minimizer_positions_deque::<false>(storage, frag_len, k, l, offset, scores, min_positions, scores_buf, deque);
+            minimizer_positions_deque::<false, _>(storage, frag_len, k, l, offset, scores, min_positions, scores_buf, deque);
         }
         SplitMode::Msp => {
             let scores = uhs_scores(l);
-            minimizer_positions_deque::<false>(storage, frag_len, k, l, offset, scores, min_positions, scores_buf, deque);
+            minimizer_positions_deque::<false, _>(storage, frag_len, k, l, offset, scores, min_positions, scores_buf, deque);
         }
     }
 }
@@ -228,8 +230,11 @@ impl SuperkmersIterator {
         let num_lmers = seq_str.len().saturating_sub(l - 1);
         let mut scores_buf = Vec::with_capacity(num_lmers);
         let mut deque = Vec::with_capacity(num_lmers);
+        let mut frag_storage = Vec::new();
         for (offset, fragment) in &fragments {
-            let frag_storage = bitpack_fragment(fragment);
+            let frag_words = (fragment.len() + 31) / 32;
+            frag_storage.resize(frag_words, 0);
+            crate::utils::bitpack_fragment_into(fragment, &mut frag_storage);
             uhs_positions_into(&frag_storage, fragment.len(), k, l, *offset, mode, &mut all_min_positions, &mut scores_buf, &mut deque);
         }
         SuperkmersIterator { min_positions: all_min_positions, storage: full_storage, p: 0, k, l, canonical }

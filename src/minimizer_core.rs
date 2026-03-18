@@ -2,8 +2,30 @@
 //!
 //! Score-table-agnostic sliding window minimum via monotonic deque.
 //! Used by iteratorsyncmers2, iteratoruhs, and other minimizer-based iterators.
+//!
+//! Score tables are generic over the `Score` trait (implemented for u16, u32).
+//! Pre-compressed scores avoid per-lookup bit manipulation in the hot loop.
 
 use crate::Superkmer;
+
+/// Trait for score table entries. Scores are pre-compressed during table generation
+/// so the hot loop just widens to usize — no bit shifting needed.
+pub trait Score: Copy + Ord {
+    const MAX: Self;
+    fn to_usize(self) -> usize;
+}
+
+impl Score for u16 {
+    const MAX: Self = u16::MAX;
+    #[inline(always)]
+    fn to_usize(self) -> usize { self as usize }
+}
+
+impl Score for u32 {
+    const MAX: Self = u32::MAX;
+    #[inline(always)]
+    fn to_usize(self) -> usize { self as usize }
+}
 
 /// Extract a single base (2 bits) from bitpacked storage at the given position.
 #[inline(always)]
@@ -54,22 +76,18 @@ pub fn canonical_table(l: usize) -> &'static [(u32, bool)] {
     }
 }
 
-/// Pack (score, position) into a single usize for block-decomposition comparison.
-/// High 32 bits: compressed score. Low 32 bits: position (or complement for CLASSICAL).
+/// Pack (pre-compressed score, position) into a single usize for block-decomposition comparison.
+/// High 32 bits: score (already compressed during table generation).
+/// Low 32 bits: position (or complement for CLASSICAL).
 /// Comparing packed values directly gives correct minimizer ordering.
 #[inline(always)]
 fn pack_score_pos<const CLASSICAL: bool>(score: usize, pos: usize) -> usize {
-    // Compress score to 32 bits: syncmer bit (bit 32 of score) → bit 31, low 31 bits of hash.
-    // For mspxor l=8: 16 bits of tiebreaker entropy (full resolution).
-    // For mspxor l=9: 18 bits of tiebreaker entropy (full resolution).
-    // For binary scores (0/1): maps to 0 and 1 in score32.
-    let score32 = ((score >> 32) << 31) | (score & 0x7FFF_FFFF);
     if CLASSICAL {
         // Rightmost wins on tie: complement position so min() picks higher pos
-        (score32 << 32) | (0xFFFF_FFFF - pos)
+        (score << 32) | (0xFFFF_FFFF - pos)
     } else {
         // Leftmost wins on tie: lower position = lower packed value
-        (score32 << 32) | pos
+        (score << 32) | pos
     }
 }
 
@@ -95,9 +113,9 @@ fn unpack_pos<const CLASSICAL: bool>(packed: usize) -> usize {
 /// Emits (kmer_start, minimizer_pos, minimizer_kmer, fragment_end) tuples.
 /// All positions are absolute (offset already added).
 #[inline(always)]
-pub fn minimizer_positions_deque<const CLASSICAL: bool>(
+pub fn minimizer_positions_deque<const CLASSICAL: bool, S: Score>(
     storage: &[u64], frag_len: usize, k: usize, l: usize, offset: usize,
-    scores: &[usize], min_positions: &mut Vec<(usize, usize, usize, usize)>,
+    scores: &[S], min_positions: &mut Vec<(usize, usize, usize, usize)>,
     scores_buf: &mut Vec<usize>, deque: &mut Vec<usize>,
 ) {
     let frag_end = offset + frag_len;
@@ -115,11 +133,11 @@ pub fn minimizer_positions_deque<const CLASSICAL: bool>(
     // Pass 1: compute packed (score, position) values via rolling kmer
     unsafe {
         let mut rolling = get_kmer_value(storage, 0, l);
-        *scores_buf.get_unchecked_mut(0) = pack_score_pos::<CLASSICAL>(*scores.get_unchecked(rolling), 0);
+        *scores_buf.get_unchecked_mut(0) = pack_score_pos::<CLASSICAL>((*scores.get_unchecked(rolling)).to_usize(), 0);
         for pos in 1..num_lmers {
             let new_base = get_base(storage, pos + l - 1);
             rolling = ((rolling << 2) | new_base) & mask;
-            *scores_buf.get_unchecked_mut(pos) = pack_score_pos::<CLASSICAL>(*scores.get_unchecked(rolling), pos);
+            *scores_buf.get_unchecked_mut(pos) = pack_score_pos::<CLASSICAL>((*scores.get_unchecked(rolling)).to_usize(), pos);
         }
     }
 
@@ -182,9 +200,9 @@ pub fn minimizer_positions_deque<const CLASSICAL: bool>(
 /// On falloff: rescan picks rightmost among ties (stays in window longest).
 /// This maximizes superkmer length for binary/low-cardinality score tables.
 #[inline(always)]
-pub fn minimizer_positions_sticky(
+pub fn minimizer_positions_sticky<S: Score>(
     storage: &[u64], frag_len: usize, k: usize, l: usize, offset: usize,
-    scores: &[usize], min_positions: &mut Vec<(usize, usize, usize, usize)>,
+    scores: &[S], min_positions: &mut Vec<(usize, usize, usize, usize)>,
 ) {
     let frag_end = offset + frag_len;
     if frag_len < k { return; }
@@ -193,8 +211,8 @@ pub fn minimizer_positions_sticky(
     let mask = (1usize << (l * 2)) - 1;
 
     // Find rightmost minimum in a range
-    let find_min = |start: usize, stop: usize| -> (usize, usize, usize) {
-        let mut best_val = usize::MAX;
+    let find_min = |start: usize, stop: usize| -> (S, usize, usize) {
+        let mut best_val = S::MAX;
         let mut best_pos = start;
         let mut best_kmer = 0;
         for pos in start..=stop {

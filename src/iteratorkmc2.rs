@@ -176,8 +176,11 @@ impl SuperkmersIterator {
 
         let mut all_min_positions: Vec<(usize, usize, usize, usize)> = Vec::new();
 
+        let mut frag_storage = Vec::new();
         for (offset, fragment) in &fragments {
-            let frag_storage = bitpack_fragment(fragment);
+            let frag_words = (fragment.len() + 31) / 32;
+            frag_storage.resize(frag_words, 0);
+            crate::utils::bitpack_fragment_into(fragment, &mut frag_storage);
             let positions = msp_minimizer_positions(&frag_storage, fragment.len(), k, l, *offset);
             all_min_positions.extend(positions);
         }

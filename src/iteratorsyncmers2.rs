@@ -21,16 +21,20 @@ pub use crate::minimizer_core::{get_kmer_value, get_base};
 
 const S: usize = 2; //syncmer's s parameter
 
+/// Score type for minimizer tables. Change to u16 to halve table size further
+/// (valid for l <= 7 where canon_val fits in 15 bits).
+pub type ScoreType = u32;
+
 lazy_static! {
-static ref SYNCMER_SCORES_8: Vec<usize> = generate_syncmer_scores::<8>();
-static ref SYNCMER_SCORES_9: Vec<usize> = generate_syncmer_scores::<9>();
-static ref MSP_SYNCMER_SCORES_8: Vec<usize> = generate_msp_syncmer_scores::<8>();
-static ref MSP_SYNCMER_SCORES_9: Vec<usize> = generate_msp_syncmer_scores::<9>();
-static ref MSPXOR_SYNCMER_SCORES_8: Vec<usize> = generate_mspxor_syncmer_scores::<8>();
-static ref MSPXOR_SYNCMER_SCORES_9: Vec<usize> = generate_mspxor_syncmer_scores::<9>();
+static ref SYNCMER_SCORES_8: Vec<ScoreType> = generate_syncmer_scores::<8>();
+static ref SYNCMER_SCORES_9: Vec<ScoreType> = generate_syncmer_scores::<9>();
+static ref MSP_SYNCMER_SCORES_8: Vec<ScoreType> = generate_msp_syncmer_scores::<8>();
+static ref MSP_SYNCMER_SCORES_9: Vec<ScoreType> = generate_msp_syncmer_scores::<9>();
+static ref MSPXOR_SYNCMER_SCORES_8: Vec<ScoreType> = generate_mspxor_syncmer_scores::<8>();
+static ref MSPXOR_SYNCMER_SCORES_9: Vec<ScoreType> = generate_mspxor_syncmer_scores::<9>();
 }
 
-pub(crate) fn syncmer_scores(l: usize) -> &'static [usize] {
+pub(crate) fn syncmer_scores(l: usize) -> &'static [ScoreType] {
     match l {
         8 => &SYNCMER_SCORES_8[..],
         9 => &SYNCMER_SCORES_9[..],
@@ -38,7 +42,7 @@ pub(crate) fn syncmer_scores(l: usize) -> &'static [usize] {
     }
 }
 
-pub(crate) fn msp_syncmer_scores(l: usize) -> &'static [usize] {
+pub(crate) fn msp_syncmer_scores(l: usize) -> &'static [ScoreType] {
     match l {
         8 => &MSP_SYNCMER_SCORES_8[..],
         9 => &MSP_SYNCMER_SCORES_9[..],
@@ -46,7 +50,7 @@ pub(crate) fn msp_syncmer_scores(l: usize) -> &'static [usize] {
     }
 }
 
-pub fn mspxor_syncmer_scores(l: usize) -> &'static [usize] {
+pub fn mspxor_syncmer_scores(l: usize) -> &'static [ScoreType] {
     match l {
         8 => &MSPXOR_SYNCMER_SCORES_8[..],
         9 => &MSPXOR_SYNCMER_SCORES_9[..],
@@ -56,14 +60,15 @@ pub fn mspxor_syncmer_scores(l: usize) -> &'static [usize] {
 
 
 
-fn generate_syncmer_scores<const K: usize>() -> Vec<usize> {
+fn generate_syncmer_scores<const K: usize>() -> Vec<ScoreType> {
     generate_syncmer_scores_with_s(K, S)
 }
 
 /// Generate syncmer scores for arbitrary (l, s) parameters.
-pub fn generate_syncmer_scores_with_s(l: usize, s: usize) -> Vec<usize> {
+/// Returns binary scores: 0 = syncmer (preferred), 1 = non-syncmer.
+pub fn generate_syncmer_scores_with_s(l: usize, s: usize) -> Vec<ScoreType> {
     let num_lmers = 1 << (2 * l);
-    let mut scores = vec![0usize; num_lmers];
+    let mut scores = vec![0 as ScoreType; num_lmers];
     let mut kmer_bytes = vec![0u8; l];
     for kmer_int in 0..num_lmers {
         for (i, byte) in kmer_bytes.iter_mut().enumerate() {
@@ -76,53 +81,65 @@ pub fn generate_syncmer_scores_with_s(l: usize, s: usize) -> Vec<usize> {
             };
         }
         let syncmer = crate::syncmers::find_syncmers(l, s, &[0, l - s], None, &kmer_bytes);
-        scores[kmer_int] = syncmer.is_empty() as usize;
+        scores[kmer_int] = syncmer.is_empty() as ScoreType;
     }
     scores[0] = 1; // Demote all-A l-mer
     scores[num_lmers - 1] = 1; // Demote all-T l-mer
     scores
 }
 
-/// MSP scores: composite (syncmer_priority << 32 | canonical_value).
+/// Random constant for XOR tiebreaker. Breaks lexicographic ordering without a full hash.
+const XOR_CONSTANT: usize = 0xACE5_ACE5;
+
+/// Pre-compress a (priority, tiebreaker) pair into a single ScoreType.
+/// Layout: priority bit in the MSB region, tiebreaker in the lower bits.
+/// For ScoreType=u32: (priority << 31) | (tiebreaker & 0x7FFF_FFFF).
+/// For ScoreType=u16: (priority << 15) | (tiebreaker & 0x7FFF).
+#[inline]
+pub fn compress_score(priority: ScoreType, tiebreaker: usize) -> ScoreType {
+    let bits = std::mem::size_of::<ScoreType>() * 8;
+    let tiebreak_bits = bits - 1;
+    let tiebreak_mask = (1usize << tiebreak_bits) - 1;
+    (priority << tiebreak_bits) | (tiebreaker & tiebreak_mask) as ScoreType
+}
+
+/// MSP scores: composite (syncmer_priority, canonical_value).
 /// Syncmers sort before non-syncmers; within each group, lower canonical value wins.
 /// Scores are unique per canonical l-mer, so ties only occur between forward/RC
 /// pairs (same bucket), making the sticky loop context-independent.
-fn generate_msp_syncmer_scores<const K: usize>() -> Vec<usize> {
+fn generate_msp_syncmer_scores<const K: usize>() -> Vec<ScoreType> {
     let base = generate_syncmer_scores::<K>();
     let canon_table = canonical_table(K);
-    let mut scores = vec![0usize; 1 << (2 * K)];
+    let mut scores = vec![0 as ScoreType; 1 << (2 * K)];
     for fwd in 0..(1 << (2 * K)) {
         let (canon_val, _) = canon_table[fwd];
-        scores[fwd] = (base[canon_val as usize] << 32) | canon_val as usize;
+        scores[fwd] = compress_score(base[canon_val as usize], canon_val as usize);
     }
     scores
 }
 
-/// Random constant for XOR tiebreaker. Breaks lexicographic ordering without a full hash.
-const XOR_CONSTANT: usize = 0xACE5_ACE5;
-
-/// MSP-xor scores: composite (syncmer_priority << 32 | (canonical_value ^ XOR_CONSTANT)).
+/// MSP-xor scores: composite (syncmer_priority, canonical_value ^ XOR_CONSTANT).
 /// Like MSP but XORs a constant to break A-rich lexicographic bias.
-fn generate_mspxor_syncmer_scores<const K: usize>() -> Vec<usize> {
+fn generate_mspxor_syncmer_scores<const K: usize>() -> Vec<ScoreType> {
     let base = generate_syncmer_scores::<K>();
     let canon_table = canonical_table(K);
-    let mut scores = vec![0usize; 1 << (2 * K)];
+    let mut scores = vec![0 as ScoreType; 1 << (2 * K)];
     for fwd in 0..(1 << (2 * K)) {
         let (canon_val, _) = canon_table[fwd];
-        scores[fwd] = (base[canon_val as usize] << 32) | (canon_val as usize ^ XOR_CONSTANT);
+        scores[fwd] = compress_score(base[canon_val as usize], canon_val as usize ^ XOR_CONSTANT);
     }
     scores
 }
 
 /// Generate mspxor scores with arbitrary (l, s) parameters.
-pub fn generate_mspxor_syncmer_scores_with_s(l: usize, s: usize) -> Vec<usize> {
+pub fn generate_mspxor_syncmer_scores_with_s(l: usize, s: usize) -> Vec<ScoreType> {
     let base = generate_syncmer_scores_with_s(l, s);
     let canon_table = canonical_table(l);
     let num_lmers = 1 << (2 * l);
-    let mut scores = vec![0usize; num_lmers];
+    let mut scores = vec![0 as ScoreType; num_lmers];
     for fwd in 0..num_lmers {
         let (canon_val, _) = canon_table[fwd];
-        scores[fwd] = (base[canon_val as usize] << 32) | (canon_val as usize ^ XOR_CONSTANT);
+        scores[fwd] = compress_score(base[canon_val as usize], canon_val as usize ^ XOR_CONSTANT);
     }
     scores
 }
@@ -135,7 +152,7 @@ use crate::utils::bitpack_fragment;
 /// This matches debruijn's msp.rs MinPos exactly.
 #[derive(Clone, Copy, PartialEq, Eq)]
 struct MinPos {
-    val: usize,
+    val: ScoreType,
     pos: usize,
     kmer: usize,
 }
@@ -170,15 +187,15 @@ fn msp_syncmer_positions_into(storage: &[u64], frag_len: usize, k: usize, l: usi
         SplitMode::Sticky => msp_syncmer_positions_sticky(storage, frag_len, k, l, offset, min_positions),
         SplitMode::Classical => {
             let scores = syncmer_scores(l);
-            minimizer_positions_deque::<true>(storage, frag_len, k, l, offset, scores, min_positions, scores_buf, deque);
+            minimizer_positions_deque::<true, _>(storage, frag_len, k, l, offset, scores, min_positions, scores_buf, deque);
         }
         SplitMode::Msp => {
             let scores = msp_syncmer_scores(l);
-            minimizer_positions_deque::<false>(storage, frag_len, k, l, offset, scores, min_positions, scores_buf, deque);
+            minimizer_positions_deque::<false, _>(storage, frag_len, k, l, offset, scores, min_positions, scores_buf, deque);
         }
         SplitMode::MspXor => {
             let scores = mspxor_syncmer_scores(l);
-            minimizer_positions_deque::<false>(storage, frag_len, k, l, offset, scores, min_positions, scores_buf, deque);
+            minimizer_positions_deque::<false, _>(storage, frag_len, k, l, offset, scores, min_positions, scores_buf, deque);
         }
     }
 }
@@ -296,8 +313,11 @@ impl SuperkmersIterator {
         let mut scores_buf = Vec::with_capacity(num_lmers);
         let mut deque = Vec::with_capacity(num_lmers);
 
+        let mut frag_storage = Vec::new();
         for (offset, fragment) in &fragments {
-            let frag_storage = bitpack_fragment(fragment);
+            let frag_words = (fragment.len() + 31) / 32;
+            frag_storage.resize(frag_words, 0);
+            crate::utils::bitpack_fragment_into(fragment, &mut frag_storage);
             msp_syncmer_positions_into(&frag_storage, fragment.len(), k, l, *offset, mode, &mut all_min_positions, &mut scores_buf, &mut deque);
         }
 
