@@ -12,7 +12,6 @@
 //! let iter = SuperkmersIterator::non_canonical(seq, 31, 9); // forward-strand
 //! ```
 use crate::{Superkmer, SplitMode};
-use crate::minimizer_core::canonical_table;
 
 const SMER_SIZE: usize = 2; // syncmer's s parameter
 
@@ -257,8 +256,7 @@ fn superkmers_from_fragment(
         };
 
         // Helper: emit a superkmer from sk_start to the k-mer at last_kmer_idx.
-        // Uses ASCII-based canonical_lmer_index (only for sticky path, called O(superkmers) times).
-        let canon_table = canonical_table(l);
+        // Computes canonical l-mer inline via bit manipulation (no table needed).
         let emit = |sk_start: usize, last_kmer_idx: usize, min_pos: u32,
                     results: &mut Vec<Superkmer>| {
             let start = sk_start;
@@ -271,8 +269,13 @@ fn superkmers_from_fragment(
                 fwd = (fwd << 2) | encode_base(ascii_slice[p + j]);
             }
             let (mint, mint_is_rc) = if canonical {
-                let (c, r) = canon_table[fwd];
-                (c as usize, r)
+                let mut rc = 0usize;
+                let mut v = fwd;
+                for _ in 0..l {
+                    rc = (rc << 2) | (3 - (v & 3));
+                    v >>= 2;
+                }
+                if rc < fwd { (rc, true) } else { (fwd, false) }
             } else {
                 (fwd, false)
             };
