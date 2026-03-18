@@ -2,7 +2,8 @@
 //! super-kmer extraction. Uses ntHash-based random minimizers (not syncmers).
 //!
 //! The library handles the sliding window internally via SIMD, so no manual
-//! deque or scoring is needed here.
+//! deque or scoring is needed here. Mint (canonical l-mer value) is computed
+//! inline at superkmer boundaries only.
 //!
 //! Requires odd k (e.g. k=31) for canonical mode (simd-minimizers constraint:
 //! l = w + k_min - 1 must be odd, and their l = our k).
@@ -12,72 +13,62 @@ use simd_minimizers::packed_seq::AsciiSeq;
 
 /// Encode ASCII base to 2-bit (A=0, C=1, G=2, T=3).
 #[inline(always)]
-fn encode_base(b: u8) -> u64 {
-    (((b >> 1) ^ (b >> 2)) & 3) as u64
+fn encode_base(b: u8) -> usize {
+    (((b >> 1) ^ (b >> 2)) & 3) as usize
 }
 
-/// Collect superkmers from a single N-free fragment.
-fn superkmers_from_fragment(
+/// Compute canonical l-mer value and RC flag from ASCII at a given position.
+#[inline(always)]
+fn canonical_lmer(ascii: &[u8], pos: usize, l: usize) -> (u32, bool) {
+    let mut fwd = 0usize;
+    for j in 0..l {
+        fwd = (fwd << 2) | encode_base(ascii[pos + j]);
+    }
+    let mut rc = 0usize;
+    let mut v = fwd;
+    for _ in 0..l {
+        rc = (rc << 2) | (3 - (v & 3));
+        v >>= 2;
+    }
+    if rc < fwd { (rc as u32, true) } else { (fwd as u32, false) }
+}
+
+/// Convert SIMD output buffers into Superkmer structs.
+#[inline]
+fn emit_superkmers(
     ascii_slice: &[u8],
     k: usize,
     l: usize,
     offset: usize,
     canonical: bool,
+    min_pos: &[u32],
+    sk_pos: &[u32],
     results: &mut Vec<Superkmer>,
-    min_pos_buf: &mut Vec<u32>,
-    sk_pos_buf: &mut Vec<u32>,
 ) {
     let seq_len = ascii_slice.len();
-    if seq_len < k {
-        return;
-    }
-
-    assert!(
-        k % 2 == 1,
-        "canonical_minimizers requires odd k (their l = our k), got k={}",
-        k
-    );
-
-    let w = k - l + 1; // window size in simd-minimizers notation
-
-    min_pos_buf.clear();
-    sk_pos_buf.clear();
-
-    // Collect canonical values eagerly to release the borrow on min_pos_buf.
-    let vals: Vec<u64> = simd_minimizers::canonical_minimizers(l, w)
-        .super_kmers(sk_pos_buf)
-        .run(AsciiSeq(ascii_slice), min_pos_buf)
-        .values_u64()
-        .collect();
-
-    let n = min_pos_buf.len();
-    if n == 0 {
-        return;
-    }
+    let n = min_pos.len();
+    if n == 0 { return; }
 
     results.reserve(n);
     for i in 0..n {
-        let sk_start = sk_pos_buf[i] as usize;
+        let sk_start = sk_pos[i] as usize;
         let last_kmer = if i + 1 < n {
-            sk_pos_buf[i + 1] as usize - 1
+            sk_pos[i + 1] as usize - 1
         } else {
             seq_len - k
         };
-        let sk_end = last_kmer + k;
-        let size = sk_end - sk_start;
-        let mpos = min_pos_buf[i] as usize - sk_start;
-        let mint = vals[i] as u32;
+        let size = last_kmer + k - sk_start;
+        let mpos = min_pos[i] as usize - sk_start;
 
-        let mint_is_rc = if canonical {
-            // Compare canonical value with forward l-mer to determine RC
-            let pos = min_pos_buf[i] as usize;
-            let mut fwd = 0u64;
+        let (mint, mint_is_rc) = if canonical {
+            canonical_lmer(ascii_slice, min_pos[i] as usize, l)
+        } else {
+            let mut fwd = 0usize;
+            let pos = min_pos[i] as usize;
             for j in 0..l {
                 fwd = (fwd << 2) | encode_base(ascii_slice[pos + j]);
             }
-            mint as u64 != fwd
-        } else {
-            false
+            (fwd as u32, false)
         };
 
         results.push(Superkmer {
@@ -90,6 +81,67 @@ fn superkmers_from_fragment(
     }
 }
 
+/// Reusable superkmer extractor. Create once, call `process()` per read.
+pub struct SuperkmerExtractor {
+    superkmers: Vec<Superkmer>,
+    storage: Vec<u64>,
+    min_pos: Vec<u32>,
+    sk_pos: Vec<u32>,
+    k: usize,
+    l: usize,
+    canonical: bool,
+}
+
+impl SuperkmerExtractor {
+    pub fn new(k: usize, l: usize) -> Self {
+        Self { superkmers: Vec::new(), storage: Vec::new(), min_pos: Vec::new(), sk_pos: Vec::new(), k, l, canonical: true }
+    }
+
+    pub fn non_canonical(k: usize, l: usize) -> Self {
+        Self { superkmers: Vec::new(), storage: Vec::new(), min_pos: Vec::new(), sk_pos: Vec::new(), k, l, canonical: false }
+    }
+
+    pub fn process(&mut self, seq: &[u8]) -> &[Superkmer] {
+        self.superkmers.clear();
+        if seq.len() < self.k { return &self.superkmers; }
+        let num_words = (seq.len() + 31) / 32;
+        self.storage.resize(num_words, 0);
+        crate::utils::bitpack_fragment_into(seq, &mut self.storage);
+        let w = self.k - self.l + 1;
+        self.min_pos.clear();
+        self.sk_pos.clear();
+        simd_minimizers::canonical_minimizers(self.l, w)
+            .super_kmers(&mut self.sk_pos)
+            .run(AsciiSeq(seq), &mut self.min_pos);
+        emit_superkmers(seq, self.k, self.l, 0, self.canonical, &self.min_pos, &self.sk_pos, &mut self.superkmers);
+        &self.superkmers
+    }
+
+    pub fn process_with_n(&mut self, seq: &[u8]) -> &[Superkmer] {
+        self.superkmers.clear();
+        if seq.len() < self.k { return &self.superkmers; }
+        let num_words = (seq.len() + 31) / 32;
+        self.storage.resize(num_words, 0);
+        crate::utils::bitpack_fragment_into(seq, &mut self.storage);
+        let fragments = crate::utils::split_on_n(seq, self.k);
+        let w = self.k - self.l + 1;
+        for (offset, fragment) in &fragments {
+            self.min_pos.clear();
+            self.sk_pos.clear();
+            simd_minimizers::canonical_minimizers(self.l, w)
+                .super_kmers(&mut self.sk_pos)
+                .run(AsciiSeq(fragment), &mut self.min_pos);
+            emit_superkmers(fragment, self.k, self.l, *offset, self.canonical, &self.min_pos, &self.sk_pos, &mut self.superkmers);
+        }
+        &self.superkmers
+    }
+
+    /// Access the 2-bit packed representation of the last processed sequence.
+    pub fn storage(&self) -> &[u64] {
+        &self.storage
+    }
+}
+
 pub struct SuperkmersIterator {
     superkmers: Vec<Superkmer>,
     pos: usize,
@@ -97,22 +149,15 @@ pub struct SuperkmersIterator {
 
 impl SuperkmersIterator {
     pub fn new(seq: &[u8], k: usize, l: usize) -> Self {
-        let mut superkmers = Vec::new();
-        let mut min_pos_buf = Vec::new();
-        let mut sk_pos_buf = Vec::new();
-        superkmers_from_fragment(seq, k, l, 0, true, &mut superkmers, &mut min_pos_buf, &mut sk_pos_buf);
-        SuperkmersIterator { superkmers, pos: 0 }
+        let mut ext = SuperkmerExtractor::new(k, l);
+        let sks = ext.process(seq);
+        SuperkmersIterator { superkmers: sks.to_vec(), pos: 0 }
     }
 
     pub fn new_with_n(seq: &[u8], k: usize, l: usize) -> Self {
-        let fragments = crate::utils::split_on_n(seq, k);
-        let mut superkmers = Vec::new();
-        let mut min_pos_buf = Vec::new();
-        let mut sk_pos_buf = Vec::new();
-        for (offset, fragment) in &fragments {
-            superkmers_from_fragment(fragment, k, l, *offset, true, &mut superkmers, &mut min_pos_buf, &mut sk_pos_buf);
-        }
-        SuperkmersIterator { superkmers, pos: 0 }
+        let mut ext = SuperkmerExtractor::new(k, l);
+        let sks = ext.process_with_n(seq);
+        SuperkmersIterator { superkmers: sks.to_vec(), pos: 0 }
     }
 }
 
@@ -125,12 +170,6 @@ impl Iterator for SuperkmersIterator {
         }
         let idx = self.pos;
         self.pos += 1;
-        Some(Superkmer {
-            start: self.superkmers[idx].start,
-            mint: self.superkmers[idx].mint,
-            size: self.superkmers[idx].size,
-            mpos: self.superkmers[idx].mpos,
-            mint_is_rc: self.superkmers[idx].mint_is_rc,
-        })
+        Some(self.superkmers[idx])
     }
 }

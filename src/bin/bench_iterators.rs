@@ -135,6 +135,48 @@ fn main() {
             let v: Vec<_> = iter.collect();
             std::hint::black_box(v);
         });
+
+        bench("cminim-raw (l=9)", &seqs, iters, filter_ref, |s| {
+            use simd_minimizers::packed_seq::AsciiSeq;
+            let l = 9;
+            let w = k - l + 1;
+            let mut min_pos = Vec::new();
+            let mut sk_pos = Vec::new();
+            simd_minimizers::canonical_minimizers(l, w)
+                .super_kmers(&mut sk_pos)
+                .run(AsciiSeq(s), &mut min_pos);
+            std::hint::black_box((&min_pos, &sk_pos));
+        });
+
+        bench("cminim-raw+mint (l=9)", &seqs, iters, filter_ref, |s| {
+            use simd_minimizers::packed_seq::AsciiSeq;
+            let l = 9usize;
+            let w = k - l + 1;
+            let mut min_pos = Vec::new();
+            let mut sk_pos = Vec::new();
+            simd_minimizers::canonical_minimizers(l, w)
+                .super_kmers(&mut sk_pos)
+                .run(AsciiSeq(s), &mut min_pos);
+            // Compute mint inline at superkmer boundaries only
+            let mut total_mint = 0u64;
+            for i in 0..min_pos.len() {
+                let p = min_pos[i] as usize;
+                let mut fwd = 0usize;
+                for j in 0..l {
+                    let b = s[p + j];
+                    fwd = (fwd << 2) | ((((b >> 1) ^ (b >> 2)) & 3) as usize);
+                }
+                let mut rc = 0usize;
+                let mut v = fwd;
+                for _ in 0..l {
+                    rc = (rc << 2) | (3 - (v & 3));
+                    v >>= 2;
+                }
+                let mint = if rc < fwd { rc } else { fwd };
+                total_mint += mint as u64;
+            }
+            std::hint::black_box(total_mint);
+        });
         }
 
         // Syncmer detection only (no superkmer extraction)
@@ -213,6 +255,15 @@ fn main() {
             let mut ext_simd = rust_superkmers::iteratorsimdmini::SuperkmerExtractor::mspxor(k, 9);
             bench("simdmini-ext:mspxor", &seqs, iters, filter_ref, |s| {
                 let sks = ext_simd.process(s);
+                std::hint::black_box(sks);
+            });
+        }
+
+        #[cfg(feature = "simd-mini")]
+        {
+            let mut ext_cminim = rust_superkmers::iteratorsimdmini_cminim::SuperkmerExtractor::new(k, 9);
+            bench("cminim-ext (l=9)", &seqs, iters, filter_ref, |s| {
+                let sks = ext_cminim.process(s);
                 std::hint::black_box(sks);
             });
         }

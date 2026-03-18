@@ -67,7 +67,7 @@ lazy_static! {
 /// - `mpos` — relative position of the minimizer within the superkmer (0-based offset from `start`).
 /// - `mint_is_rc` — `true` if the canonical minimizer is the reverse complement of the forward-strand l-mer
 ///   at position `start + mpos`. Always `false` when using `.non_canonical()`.
-#[derive(Clone, PartialEq, Eq, Hash, Debug)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub struct Superkmer {
     pub start: usize,
     pub mint: u32,
