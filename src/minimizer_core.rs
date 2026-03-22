@@ -27,6 +27,22 @@ impl Score for u32 {
     fn to_usize(self) -> usize { self as usize }
 }
 
+/// Convert ASCII DNA base to 2-bit encoding: A=0, C=1, G=2, T=3.
+#[inline(always)]
+pub fn base_from_ascii(b: u8) -> usize {
+    (((b >> 1) ^ (b >> 2)) & 3) as usize
+}
+
+/// Compute l-mer value from ASCII sequence at given position.
+#[inline(always)]
+pub fn kmer_value_ascii(seq: &[u8], pos: usize, l: usize) -> usize {
+    let mut val = 0usize;
+    for i in 0..l {
+        val = (val << 2) | base_from_ascii(unsafe { *seq.get_unchecked(pos + i) });
+    }
+    val
+}
+
 /// Extract a single base (2 bits) from bitpacked storage at the given position.
 #[inline(always)]
 pub fn get_base(data: &[u64], pos: usize) -> usize {

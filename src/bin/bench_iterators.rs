@@ -179,6 +179,19 @@ fn main() {
         });
         }
 
+        // UHS scores-only (score table lookup, no sliding window)
+        {
+            let scores = rust_superkmers::iteratoruhs::uhs_mspxor_scores(8);
+            bench("uhs scores-only l=8", &seqs, iters, filter_ref, |s| {
+                let storage = rust_superkmers::utils::bitpack_fragment(s);
+                let mut total = 0usize;
+                for i in 0..s.len().saturating_sub(7) {
+                    total += scores[rust_superkmers::iteratorsyncmers2::get_kmer_value(&storage, i, 8)] as usize;
+                }
+                std::hint::black_box(total);
+            });
+        }
+
         // Syncmer detection only (no superkmer extraction)
         {
             let scores = rust_superkmers::iteratorsyncmers2::mspxor_syncmer_scores(8);
@@ -297,6 +310,84 @@ fn main() {
                 let sks = ext_uhs.process(s);
                 std::hint::black_box(sks);
             });
+        }
+
+        // SIMD batch extractor (8 reads at a time, reports per-read throughput)
+        {
+            let mut ext_simd_batch = rust_superkmers::syncmers_simd_l8k40max::SimdBatchExtractor::new(k, 8);
+            let name = "simd-batch-ext (l=8)";
+            if filter_ref.map_or(true, |pat| name.contains(pat)) {
+                let seq_len = seqs[0].len();
+                let batch_iters = (iters / 8).max(1);
+                // Pre-build batch refs (no allocation in hot loop)
+                let mut batch_arr: [&[u8]; 8] = [&[]; 8];
+                for _ in 0..3 {
+                    for j in 0..8 { batch_arr[j] = &seqs[j % seqs.len()]; }
+                    unsafe { ext_simd_batch.process_batch(&batch_arr) };
+                }
+                let start = Instant::now();
+                for i in 0..batch_iters {
+                    for j in 0..8 { batch_arr[j] = &seqs[(i as usize * 8 + j) % seqs.len()]; }
+                    let sks = unsafe { ext_simd_batch.process_batch(&batch_arr) };
+                    std::hint::black_box(sks);
+                }
+                let elapsed = start.elapsed();
+                let total_reads = batch_iters as u64 * 8;
+                let ns_per_read = elapsed.as_nanos() as f64 / total_reads as f64;
+                let mb_per_sec = seq_len as f64 / ns_per_read * 1000.0;
+                println!("{:25} {:10.0} ns    {:8.1} MB/s", name, ns_per_read, mb_per_sec);
+            }
+        }
+
+        // SIMD batch pack only (no kernel)
+        {
+            let mut ext_simd_batch = rust_superkmers::syncmers_simd_l8k40max::SimdBatchExtractor::new(k, 8);
+            let name = "simd-batch-pack (l=8)";
+            if filter_ref.map_or(true, |pat| name.contains(pat)) {
+                let seq_len = seqs[0].len();
+                let batch_iters = (iters / 8).max(1);
+                let mut batch_arr: [&[u8]; 8] = [&[]; 8];
+                for _ in 0..3 {
+                    for j in 0..8 { batch_arr[j] = &seqs[j % seqs.len()]; }
+                    unsafe { ext_simd_batch.bench_pack_only(&batch_arr) };
+                }
+                let start = Instant::now();
+                for i in 0..batch_iters {
+                    for j in 0..8 { batch_arr[j] = &seqs[(i as usize * 8 + j) % seqs.len()]; }
+                    unsafe { ext_simd_batch.bench_pack_only(&batch_arr) };
+                }
+                let elapsed = start.elapsed();
+                let total_reads = batch_iters as u64 * 8;
+                let ns_per_read = elapsed.as_nanos() as f64 / total_reads as f64;
+                let mb_per_sec = seq_len as f64 / ns_per_read * 1000.0;
+                println!("{:25} {:10.0} ns    {:8.1} MB/s", name, ns_per_read, mb_per_sec);
+            }
+        }
+
+        // SIMD batch kernel only (pack + kernel, no materialization)
+        {
+            let mut ext_simd_batch = rust_superkmers::syncmers_simd_l8k40max::SimdBatchExtractor::new(k, 8);
+            let name = "simd-batch-kernel (l=8)";
+            if filter_ref.map_or(true, |pat| name.contains(pat)) {
+                let seq_len = seqs[0].len();
+                let batch_iters = (iters / 8).max(1);
+                let mut batch_arr: [&[u8]; 8] = [&[]; 8];
+                for _ in 0..3 {
+                    for j in 0..8 { batch_arr[j] = &seqs[j % seqs.len()]; }
+                    unsafe { ext_simd_batch.bench_kernel_only(&batch_arr) };
+                }
+                let start = Instant::now();
+                let mut total_changes = 0usize;
+                for i in 0..batch_iters {
+                    for j in 0..8 { batch_arr[j] = &seqs[(i as usize * 8 + j) % seqs.len()]; }
+                    total_changes += unsafe { ext_simd_batch.bench_kernel_only(&batch_arr) };
+                }
+                let elapsed = start.elapsed();
+                let total_reads = batch_iters as u64 * 8;
+                let ns_per_read = elapsed.as_nanos() as f64 / total_reads as f64;
+                let mb_per_sec = seq_len as f64 / ns_per_read * 1000.0;
+                println!("{:25} {:10.0} ns    {:8.1} MB/s  ({} changes)", name, ns_per_read, mb_per_sec, total_changes / batch_iters as usize);
+            }
         }
     }
 }

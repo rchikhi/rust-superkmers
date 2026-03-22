@@ -1155,3 +1155,103 @@ mod canonical_toggle {
     }
 
 }
+
+// =============================================================================
+// SIMD batch extractor tests
+// =============================================================================
+
+mod simd_batch {
+    use super::*;
+
+    fn check_tiling(superkmers: &[Superkmer], seq_len: usize, k: usize) {
+        if seq_len < k { return; }
+        assert!(!superkmers.is_empty(), "should have at least one superkmer for len={}", seq_len);
+        assert_eq!(superkmers[0].start, 0);
+
+        for i in 0..superkmers.len() {
+            let sk = &superkmers[i];
+            let sk_end = sk.start + sk.size as usize;
+            assert!(sk.size as usize >= k, "superkmer {} too small: size={}", i, sk.size);
+
+            if i < superkmers.len() - 1 {
+                assert_eq!(superkmers[i + 1].start, sk_end - k + 1,
+                    "gap/overlap between superkmers {} and {}", i, i + 1);
+            } else {
+                assert_eq!(sk_end, seq_len,
+                    "last superkmer doesn't reach end: sk_end={}, seq_len={}", sk_end, seq_len);
+            }
+        }
+    }
+
+    #[test]
+    fn test_simd_batch_tiling_150bp() {
+        let k = 31;
+        let l = 8;
+        let mut ext = rust_superkmers::syncmers_simd_l8k40max::SimdBatchExtractor::new(k, l);
+
+        for seed in 0..100 {
+            let seq = random_dna(150, 42 + seed);
+            let batch: [&[u8]; 8] = [&seq; 8];
+            let results = unsafe { ext.process_batch(&batch) };
+
+            for lane in 0..8 {
+                check_tiling(&results[lane], seq.len(), k);
+            }
+            // All lanes get same input → same output
+            for lane in 1..8 {
+                assert_eq!(results[0].len(), results[lane].len(),
+                    "seed={} lane {} count mismatch", seed, lane);
+                for (i, (a, b)) in results[0].iter().zip(results[lane].iter()).enumerate() {
+                    assert_eq!((a.start, a.size, a.mpos), (b.start, b.size, b.mpos),
+                        "seed={} sk={} mismatch lane 0 vs {}", seed, i, lane);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn test_simd_batch_various_lengths() {
+        let k = 31;
+        let l = 8;
+        let mut ext = rust_superkmers::syncmers_simd_l8k40max::SimdBatchExtractor::new(k, l);
+
+        for &len in &[50, 100, 150, 200, 300, 500] {
+            let seq = random_dna(len, 123 + len as u64);
+            let batch: [&[u8]; 8] = [&seq; 8];
+            let results = unsafe { ext.process_batch(&batch) };
+            for lane in 0..8 {
+                check_tiling(&results[lane], seq.len(), k);
+            }
+        }
+    }
+
+    #[test]
+    fn test_simd_batch_different_reads() {
+        let k = 31;
+        let l = 8;
+        let mut ext = rust_superkmers::syncmers_simd_l8k40max::SimdBatchExtractor::new(k, l);
+
+        let seqs: Vec<Vec<u8>> = (0..8).map(|i| random_dna(150, 100 + i)).collect();
+        let batch: [&[u8]; 8] = std::array::from_fn(|i| seqs[i].as_slice());
+        let results = unsafe { ext.process_batch(&batch) };
+        for lane in 0..8 {
+            check_tiling(&results[lane], seqs[lane].len(), k);
+        }
+    }
+
+    #[test]
+    fn test_simd_batch_mixed_lengths() {
+        let k = 31;
+        let l = 8;
+        let mut ext = rust_superkmers::syncmers_simd_l8k40max::SimdBatchExtractor::new(k, l);
+
+        let lens = [150, 100, 200, 50, 150, 300, 75, 150];
+        let seqs: Vec<Vec<u8>> = lens.iter().enumerate()
+            .map(|(i, &len)| random_dna(len, 200 + i as u64)).collect();
+        let batch: [&[u8]; 8] = std::array::from_fn(|i| seqs[i].as_slice());
+        let results = unsafe { ext.process_batch(&batch) };
+        for lane in 0..8 {
+            check_tiling(&results[lane], seqs[lane].len(), k);
+        }
+    }
+}

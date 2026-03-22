@@ -45,24 +45,27 @@ Key modules:
 - `syncmers`: syncmer detection utility (`find_syncmers`)
 - `utils`: AVX2/scalar bitpacking, `split_on_n`
 
-### Extractor speed (1M random DNA, k=31)
+### Extractor speed (random DNA, k=31)
 
-| Method | Throughput | Notes |
-|--------|-----------|-------|
-| cminim-ext (l=9) | **474 MB/s** | ntHash SIMD, fast but poor bucket balance |
-| simdmini-ext sticky (l=9) | 349 MB/s | SIMD syncmers + our MSP window |
-| syncmers2-ext:mspxor (l=8) | 287 MB/s | best bucket balance (94x max/mean) |
-| uhs-ext:mspxor (l=8) | 277 MB/s | UHS ry-patterns |
-| syncmers2-ext:mspxor (l=9) | 234 MB/s | |
-| syncmers2-ext sticky (l=8) | 157 MB/s | fewest superkmers (140M) |
+| Method | 150bp | 10K | 1M | Notes |
+|--------|-------|-----|-----|-------|
+| cminim-ext (l=9) | 220 MB/s | **506 MB/s** | **471 MB/s** | ntHash SIMD, poor bucket balance |
+| simdmini-ext sticky (l=9) | 250 MB/s | 362 MB/s | 346 MB/s | SIMD syncmers + MSP window |
+| **uhs-ext:mspxor (l=8)** | **394 MB/s** | 380 MB/s | 270 MB/s | best short-read perf + good balance |
+| syncmers2-ext:mspxor (l=8) | 354 MB/s | 360 MB/s | 294 MB/s | best bucket balance (94x max/mean) |
+| syncmers2-ext:mspxor (l=9) | 328 MB/s | 303 MB/s | 240 MB/s | |
+| uhs-ext sticky (l=8) | 196 MB/s | 169 MB/s | 167 MB/s | |
+| syncmers2-ext sticky (l=8) | 177 MB/s | 161 MB/s | 156 MB/s | fewest superkmers (140M) |
+| simdmini-ext:mspxor (l=9) | 123 MB/s | 144 MB/s | 139 MB/s | SIMD detect fast, MSP window slow |
 
 ### Speed vs bucket quality trade-off
 
-| Method | Speed | Superkmers | Max/Mean | Use case |
-|--------|-------|-----------|----------|----------|
-| cminim-ext | **474 MB/s** | 264M | 743x | streaming without partitioning |
-| syncmers2-ext:mspxor | 287 MB/s | 251M | **94x** | balanced bucket partitioning |
-| syncmers2-ext sticky | 157 MB/s | **140M** | 165x | fewest superkmers |
+| Method | Speed (1M) | Speed (150bp) | Superkmers | Max/Mean | Use case |
+|--------|-----------|---------------|-----------|----------|----------|
+| cminim-ext | **471 MB/s** | 220 MB/s | 264M | 743x | streaming without partitioning |
+| uhs-ext:mspxor | 270 MB/s | **394 MB/s** | 246M | 151x | short-read partitioning |
+| syncmers2-ext:mspxor | 294 MB/s | 354 MB/s | 251M | **94x** | balanced bucket partitioning |
+| syncmers2-ext sticky | 156 MB/s | 177 MB/s | **140M** | 165x | fewest superkmers |
 
 ## Bucket Distribution Analysis (CHM13 human genome, k=31)
 

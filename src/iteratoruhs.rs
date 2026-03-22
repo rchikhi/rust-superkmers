@@ -146,7 +146,7 @@ fn uhs_scores(l: usize) -> &'static [ScoreType] {
     }
 }
 
-fn uhs_mspxor_scores(l: usize) -> &'static [ScoreType] {
+pub fn uhs_mspxor_scores(l: usize) -> &'static [ScoreType] {
     match l {
         7 => &UHS_MSPXOR_SCORES_7[..],
         8 => &UHS_MSPXOR_SCORES_8[..],

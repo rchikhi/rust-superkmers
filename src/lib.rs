@@ -1,4 +1,5 @@
 #![feature(generic_const_exprs)]
+#![feature(target_feature_inline_always)]
 #[allow(incomplete_features)]
 pub mod utils;
 pub mod naive;
@@ -17,6 +18,7 @@ pub mod iteratorsimdmini_cminim;
 #[cfg(feature = "multi-mini")]
 pub mod iteratormultiminimizers;
 pub mod naivesyncmers;
+pub mod syncmers_simd_l8k40max;
 use std::cmp::Ordering;
 use lazy_static::lazy_static;
 
