@@ -468,6 +468,7 @@ pub struct SimdBatchExtractor {
     k: usize,
     l: usize,
     packed_buf: Vec<u8>,
+    packed_stride: usize, // bytes between lanes in packed_buf
     min_pos_buf: Vec<__m256i>,
     is_rc_buf: Vec<u8>,
     changes: [Vec<MinChange>; 8],
@@ -484,6 +485,7 @@ impl SimdBatchExtractor {
         SimdBatchExtractor {
             k, l,
             packed_buf: vec![0u8; 8 * ps_uniform + 32],
+            packed_stride: ps_uniform,
             min_pos_buf: vec![unsafe { _mm256_setzero_si256() }; max_kmers],
             is_rc_buf: vec![0u8; max_lmers],
             changes: Default::default(),
@@ -539,6 +541,14 @@ impl SimdBatchExtractor {
         seq_lengths
     }
 
+    /// Access the 2-bit packed representation of read `lane` from the last batch.
+    /// Format: 4 bases per byte, LSB-first (base 0 at bits 0-1, base 1 at bits 2-3, etc.).
+    /// Encoding: A=0, C=1, G=2, T=3 (same as standard, just LSB-first byte packing).
+    pub fn packed_storage(&self, lane: usize) -> &[u8] {
+        let off = lane * self.packed_stride;
+        &self.packed_buf[off..off + self.packed_stride]
+    }
+
     fn batch_params_static(seqs: &[&[u8]; 8]) -> ([usize; 8], [usize; 8], usize) {
         let mut max_len = 0;
         let mut seq_lengths = [0usize; 8];
@@ -558,6 +568,7 @@ impl SimdBatchExtractor {
         let mut max_len = 0;
         for s in seqs { if s.len() > max_len { max_len = s.len(); } }
         let ps_uniform = ((max_len + 3) / 4 + 32 + 31) & !31;
+        self.packed_stride = ps_uniform;
         let total = 8 * ps_uniform + 32;
         if self.packed_buf.len() < total {
             self.packed_buf.resize(total, 0);
