@@ -1254,4 +1254,42 @@ mod simd_batch {
             check_tiling(&results[lane], seqs[lane].len(), k);
         }
     }
+
+    // === l=9 tests ===
+
+    #[test]
+    fn test_simd_batch_l9_tiling_150bp() {
+        let k = 31;
+        let l = 9;
+        let mut ext = rust_superkmers::syncmers_simd_l9k41max::SimdBatchExtractor::new(k, l);
+
+        for seed in 0..100 {
+            let seq = random_dna(150, 42 + seed);
+            let batch: [&[u8]; 8] = [&seq; 8];
+            let results = unsafe { ext.process_batch(&batch) };
+            for lane in 0..8 {
+                check_tiling(&results[lane], seq.len(), k);
+            }
+            for lane in 1..8 {
+                assert_eq!(results[0].len(), results[lane].len(),
+                    "l=9 seed={} lane {} count mismatch", seed, lane);
+            }
+        }
+    }
+
+    #[test]
+    fn test_simd_batch_l9_various_lengths() {
+        let k = 31;
+        let l = 9;
+        let mut ext = rust_superkmers::syncmers_simd_l9k41max::SimdBatchExtractor::new(k, l);
+
+        for &len in &[50, 100, 150, 200, 300, 500] {
+            let seq = random_dna(len, 456 + len as u64);
+            let batch: [&[u8]; 8] = [&seq; 8];
+            let results = unsafe { ext.process_batch(&batch) };
+            for lane in 0..8 {
+                check_tiling(&results[lane], seq.len(), k);
+            }
+        }
+    }
 }
