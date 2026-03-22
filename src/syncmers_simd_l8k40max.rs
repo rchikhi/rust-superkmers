@@ -129,7 +129,8 @@ unsafe fn simd_min_u32(a: __m256i, b: __m256i) -> __m256i {
 struct MinChange {
     kmer_pos: u32,
     min_lmer_pos: u32,
-    canon_val: u32,  // canonical l-mer value, extracted from window element
+    canon_val: u32,
+    is_rc: bool,
 }
 
 // ---------------------------------------------------------------------------
@@ -146,6 +147,7 @@ unsafe fn simd_kernel(
     k: usize,
     l: usize,
     min_pos_buf: &mut [__m256i],
+    is_rc_buf: &mut [u8],     // 1 byte per l-mer position (8 lane bits)
     changes: &mut [Vec<MinChange>; 8],
 ) {
     let w = k - l + 1;
@@ -246,7 +248,8 @@ unsafe fn simd_kernel(
         }};
     }
 
-    // Issue L1 gather from 8KB syncmer bit table + compute canonical (3 ops + 1 gather)
+    // Issue L1 gather + canonical + is_rc (3 ops + 1 gather + 3 ops off critical path)
+    let mut lmer_idx: usize = 0; // l-mer position counter for is_rc_buf
     macro_rules! issue_gather {
         () => {{
             let byte_idx = _mm256_srli_epi32(rolling_fwd, 3);
@@ -254,6 +257,12 @@ unsafe fn simd_kernel(
             let gathered = _mm256_i32gather_epi32::<1>(
                 syncmer_bits.as_ptr() as *const i32, byte_idx);
             let canon = simd_min_u32(rolling_fwd, rolling_rc);
+            // is_rc: off critical path (canon and fwd ready early, result only needed in materialization)
+            let not_rc = _mm256_cmpeq_epi32(canon, rolling_fwd);
+            let is_rc_mask = _mm256_xor_si256(not_rc, all_ones);
+            *is_rc_buf.get_unchecked_mut(lmer_idx) =
+                _mm256_movemask_ps(_mm256_castsi256_ps(is_rc_mask)) as u8;
+            lmer_idx += 1;
             (gathered, bit_idx, canon)
         }};
     }
@@ -362,11 +371,12 @@ unsafe fn simd_kernel(
     {
         let xor_recover = 0xACE5u32;
 
-        // Helper: extract position and canon_val from a full element
-        let extract = |elem_u32: u32| -> (u32, u32) {
+        // Helper: extract position, canon_val, and is_rc from element + is_rc_buf
+        let extract = |elem_u32: u32, rc_byte: u8, lane: usize| -> (u32, u32, bool) {
             let pos = elem_u32 & 0x7FFF;
             let canon = ((elem_u32 >> 15) & 0xFFFF) ^ xor_recover;
-            (pos, canon)
+            let is_rc = (rc_byte >> lane) & 1 != 0;
+            (pos, canon, is_rc)
         };
 
         // First k-mer: always emit
@@ -377,9 +387,12 @@ unsafe fn simd_kernel(
             _mm256_storeu_si256(arr.as_mut_ptr() as *mut __m256i, first_elem);
             for lane in 0..8 {
                 if per_lane_kmers[lane] > 0 {
-                    let (pos, canon) = extract(arr[lane]);
+                    // The minimizer's l-mer position tells us which is_rc_buf entry to look up
+                    let (pos, canon, _) = extract(arr[lane], 0, lane);
+                    let rc_byte = *is_rc_buf.get_unchecked(pos as usize);
+                    let is_rc = (rc_byte >> lane) & 1 != 0;
                     changes[lane].push(MinChange {
-                        kmer_pos: 0, min_lmer_pos: pos, canon_val: canon,
+                        kmer_pos: 0, min_lmer_pos: pos, canon_val: canon, is_rc,
                     });
                 }
             }
@@ -399,9 +412,12 @@ unsafe fn simd_kernel(
                 while km != 0 {
                     let lane = km.trailing_zeros() as usize;
                     if (q as usize) < per_lane_kmers[lane] {
-                        let (pos, canon) = extract(arr[lane]);
+                        let pos = arr[lane] & 0x7FFF;
+                        let canon = ((arr[lane] >> 15) & 0xFFFF) ^ xor_recover;
+                        let rc_byte = *is_rc_buf.get_unchecked(pos as usize);
+                        let is_rc = (rc_byte >> lane) & 1 != 0;
                         changes[lane].push(MinChange {
-                            kmer_pos: q as u32, min_lmer_pos: pos, canon_val: canon,
+                            kmer_pos: q as u32, min_lmer_pos: pos, canon_val: canon, is_rc,
                         });
                     }
                     km &= km - 1;
@@ -417,11 +433,10 @@ unsafe fn simd_kernel(
 // ---------------------------------------------------------------------------
 
 fn materialize_from_changes(
-    seq_len: usize, changes: &[MinChange], k: usize, l: usize,
-    canonical: bool, out: &mut Vec<Superkmer>,
+    seq_len: usize, changes: &[MinChange], k: usize, _l: usize,
+    out: &mut Vec<Superkmer>,
 ) {
     if changes.is_empty() { return; }
-    let canon_table = if canonical { Some(canonical_table(l)) } else { None };
 
     for p in 0..changes.len() {
         let start_pos = changes[p].kmer_pos as usize;
@@ -433,13 +448,8 @@ fn materialize_from_changes(
             seq_len - start_pos
         };
 
-        // Use pre-computed canonical value from window element (no ASCII recomputation)
-        let min_kmer = changes[p].canon_val as usize;
-        let (mint, mint_is_rc) = if let Some(table) = canon_table {
-            table[min_kmer]
-        } else {
-            (min_kmer as u32, false)
-        };
+        let mint = changes[p].canon_val;
+        let mint_is_rc = changes[p].is_rc;
 
         out.push(Superkmer {
             start: start_pos, mint,
@@ -459,6 +469,7 @@ pub struct SimdBatchExtractor {
     l: usize,
     packed_buf: Vec<u8>,
     min_pos_buf: Vec<__m256i>,
+    is_rc_buf: Vec<u8>,
     changes: [Vec<MinChange>; 8],
     superkmers: [Vec<Superkmer>; 8],
 }
@@ -469,10 +480,12 @@ impl SimdBatchExtractor {
         let max_read = 300;
         let ps_uniform = ((max_read + 3) / 4 + 32 + 31) & !31;
         let max_kmers = max_read - k + 1;
+        let max_lmers = max_read - l + 1;
         SimdBatchExtractor {
             k, l,
             packed_buf: vec![0u8; 8 * ps_uniform + 32],
             min_pos_buf: vec![unsafe { _mm256_setzero_si256() }; max_kmers],
+            is_rc_buf: vec![0u8; max_lmers],
             changes: Default::default(),
             superkmers: Default::default(),
         }
@@ -500,7 +513,7 @@ impl SimdBatchExtractor {
             if seq_lengths[i] >= self.k {
                 materialize_from_changes(
                     seq_lengths[i], &self.changes[i],
-                    self.k, self.l, true, &mut self.superkmers[i]);
+                    self.k, self.l, &mut self.superkmers[i]);
             }
         }
         &self.superkmers
@@ -516,8 +529,13 @@ impl SimdBatchExtractor {
         if self.min_pos_buf.len() < max_kmers {
             self.min_pos_buf.resize(max_kmers, _mm256_setzero_si256());
         }
+        let max_lmers = if max_len >= self.l { max_len - self.l + 1 } else { 0 };
+        if self.is_rc_buf.len() < max_lmers {
+            self.is_rc_buf.resize(max_lmers, 0);
+        }
         simd_kernel(&self.packed_buf, &packed_offsets, &seq_lengths,
-            &SYNCMER_BITS_8, self.k, self.l, &mut self.min_pos_buf, &mut self.changes);
+            &SYNCMER_BITS_8, self.k, self.l, &mut self.min_pos_buf,
+            &mut self.is_rc_buf, &mut self.changes);
         seq_lengths
     }
 
