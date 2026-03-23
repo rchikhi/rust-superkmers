@@ -139,6 +139,7 @@ struct MinChange {
 
 #[cfg(target_arch = "x86_64")]
 #[target_feature(enable = "avx2")]
+#[inline(always)]
 unsafe fn simd_kernel(
     packed_seqs: &[u8],
     packed_offsets: &[usize; 8],
