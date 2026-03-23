@@ -608,10 +608,10 @@ impl SimdBatchExtractor16 {
     #[cfg(target_arch = "x86_64")]
     #[target_feature(enable = "avx2")]
     pub unsafe fn process_batch(&mut self, seqs: &[&[u8]; 16]) -> (&[Vec<Superkmer>; 8], &[Vec<Superkmer>; 8]) {
-        // Zero-copy split: &[&[u8]; 16] → two &[&[u8]; 8] via pointer cast
-        let ptr = seqs.as_ptr() as *const [&[u8]; 8];
-        let ra = self.a.process_batch(&*ptr);
-        let rb = self.b.process_batch(&*ptr.add(1));
+        let sa: [&[u8]; 8] = std::array::from_fn(|i| seqs[i]);
+        let sb: [&[u8]; 8] = std::array::from_fn(|i| seqs[i + 8]);
+        let ra = self.a.process_batch(&sa);
+        let rb = self.b.process_batch(&sb);
         (ra, rb)
     }
 
