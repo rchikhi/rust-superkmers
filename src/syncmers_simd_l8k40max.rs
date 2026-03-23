@@ -585,3 +585,35 @@ impl SimdBatchExtractor {
         }
     }
 }
+
+/// Process 16 reads at a time using two SimdBatchExtractors back-to-back.
+/// Amortizes per-call overhead and keeps L1 cache warm across both batches.
+pub struct Simd16xExtractor {
+    a: SimdBatchExtractor,
+    b: SimdBatchExtractor,
+}
+
+impl Simd16xExtractor {
+    pub fn new(k: usize, l: usize) -> Self {
+        Simd16xExtractor {
+            a: SimdBatchExtractor::new(k, l),
+            b: SimdBatchExtractor::new(k, l),
+        }
+    }
+
+    /// Process 16 reads. Returns two slices of 8 superkmer Vecs each.
+    #[cfg(target_arch = "x86_64")]
+    #[target_feature(enable = "avx2")]
+    pub unsafe fn process_batch_16(
+        &mut self,
+        seqs_a: &[&[u8]; 8],
+        seqs_b: &[&[u8]; 8],
+    ) -> (&[Vec<Superkmer>; 8], &[Vec<Superkmer>; 8]) {
+        let ra = self.a.process_batch(seqs_a);
+        let rb = self.b.process_batch(seqs_b);
+        (ra, rb)
+    }
+
+    pub fn packed_storage_a(&self, lane: usize) -> &[u8] { self.a.packed_storage(lane) }
+    pub fn packed_storage_b(&self, lane: usize) -> &[u8] { self.b.packed_storage(lane) }
+}
