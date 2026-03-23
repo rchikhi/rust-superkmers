@@ -367,21 +367,22 @@ fn main() {
 
         // SIMD 16x extractor (2 × 8 reads)
         {
-            let mut ext16 = rust_superkmers::syncmers_simd_l8k40max::SimdBatchExtractor16::new(k, 8);
+            let mut ext16 = rust_superkmers::syncmers_simd_l8k40max::Simd16xExtractor::new(k, 8);
             let name = "simd-16x-ext (l=8)";
             if filter_ref.map_or(true, |pat| name.contains(pat)) {
                 let seq_len = seqs[0].len();
                 let batch_iters = (iters / 16).max(1);
-                let mut arr16: [&[u8]; 16] = [&[]; 16];
+                let mut arr_a: [&[u8]; 8] = [&[]; 8];
+                let mut arr_b: [&[u8]; 8] = [&[]; 8];
                 for _ in 0..3 {
-                    for j in 0..16 { arr16[j] = &seqs[j % seqs.len()]; }
-                    unsafe { ext16.process_batch(&arr16) };
+                    for j in 0..8 { arr_a[j] = &seqs[j % seqs.len()]; arr_b[j] = &seqs[(j+8) % seqs.len()]; }
+                    unsafe { ext16.process_batch_16(&arr_a, &arr_b) };
                 }
                 let start = Instant::now();
                 for i in 0..batch_iters {
                     let base = i as usize * 16;
-                    for j in 0..16 { arr16[j] = &seqs[(base + j) % seqs.len()]; }
-                    let sks = unsafe { ext16.process_batch(&arr16) };
+                    for j in 0..8 { arr_a[j] = &seqs[(base + j) % seqs.len()]; arr_b[j] = &seqs[(base + 8 + j) % seqs.len()]; }
+                    let sks = unsafe { ext16.process_batch_16(&arr_a, &arr_b) };
                     std::hint::black_box(sks);
                 }
                 let elapsed = start.elapsed();

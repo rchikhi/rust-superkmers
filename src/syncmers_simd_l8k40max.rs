@@ -466,7 +466,7 @@ fn materialize_from_changes(
 // Public API
 // ---------------------------------------------------------------------------
 
-pub struct SimdBatchExtractor8 {
+pub struct SimdBatchExtractor {
     k: usize,
     l: usize,
     packed_buf: Vec<u8>,
@@ -477,14 +477,14 @@ pub struct SimdBatchExtractor8 {
     superkmers: [Vec<Superkmer>; 8],
 }
 
-impl SimdBatchExtractor8 {
+impl SimdBatchExtractor {
     pub fn new(k: usize, l: usize) -> Self {
         // Pre-allocate for 8 × 300bp reads
         let max_read = 300;
         let ps_uniform = ((max_read + 3) / 4 + 32 + 31) & !31;
         let max_kmers = max_read - k + 1;
         let max_lmers = max_read - l + 1;
-        SimdBatchExtractor8 {
+        SimdBatchExtractor {
             k, l,
             packed_buf: vec![0u8; 8 * ps_uniform + 32],
             packed_stride: ps_uniform,
@@ -588,39 +588,34 @@ impl SimdBatchExtractor8 {
     }
 }
 
-/// Process 16 reads at a time (2 × 8 lanes). Keeps L1 cache warm across batches.
-/// Same API shape as SimdBatchExtractor8 but takes `[&[u8]; 16]`.
-pub struct SimdBatchExtractor16 {
-    a: SimdBatchExtractor8,
-    b: SimdBatchExtractor8,
+/// Process 16 reads at a time using two SimdBatchExtractors back-to-back.
+/// Amortizes per-call overhead and keeps L1 cache warm across both batches.
+pub struct Simd16xExtractor {
+    a: SimdBatchExtractor,
+    b: SimdBatchExtractor,
 }
 
-impl SimdBatchExtractor16 {
+impl Simd16xExtractor {
     pub fn new(k: usize, l: usize) -> Self {
-        SimdBatchExtractor16 {
-            a: SimdBatchExtractor8::new(k, l),
-            b: SimdBatchExtractor8::new(k, l),
+        Simd16xExtractor {
+            a: SimdBatchExtractor::new(k, l),
+            b: SimdBatchExtractor::new(k, l),
         }
     }
 
-    /// Process 16 reads. Returns (results_0_7, results_8_15).
-    /// Access individual read results via `.0[lane]` or `.1[lane]`.
+    /// Process 16 reads. Returns two slices of 8 superkmer Vecs each.
     #[cfg(target_arch = "x86_64")]
     #[target_feature(enable = "avx2")]
-    pub unsafe fn process_batch(&mut self, seqs: &[&[u8]; 16]) -> (&[Vec<Superkmer>; 8], &[Vec<Superkmer>; 8]) {
-        let sa: [&[u8]; 8] = std::array::from_fn(|i| seqs[i]);
-        let sb: [&[u8]; 8] = std::array::from_fn(|i| seqs[i + 8]);
-        let ra = self.a.process_batch(&sa);
-        let rb = self.b.process_batch(&sb);
+    pub unsafe fn process_batch_16(
+        &mut self,
+        seqs_a: &[&[u8]; 8],
+        seqs_b: &[&[u8]; 8],
+    ) -> (&[Vec<Superkmer>; 8], &[Vec<Superkmer>; 8]) {
+        let ra = self.a.process_batch(seqs_a);
+        let rb = self.b.process_batch(seqs_b);
         (ra, rb)
     }
 
-    /// Access packed storage for a read (0..15).
-    pub fn packed_storage(&self, lane: usize) -> &[u8] {
-        if lane < 8 { self.a.packed_storage(lane) }
-        else { self.b.packed_storage(lane - 8) }
-    }
+    pub fn packed_storage_a(&self, lane: usize) -> &[u8] { self.a.packed_storage(lane) }
+    pub fn packed_storage_b(&self, lane: usize) -> &[u8] { self.b.packed_storage(lane) }
 }
-
-// Keep old names as aliases for backwards compatibility
-pub type SimdBatchExtractor = SimdBatchExtractor8;
