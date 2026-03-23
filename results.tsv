@@ -1,0 +1,24 @@
+experiment	ns_per_read	mb_per_sec	status	description
+baseline	199	753	baseline	8KB bit table + RC + canonical + build_elem, 32 ops/iter
+combined_256KB_prefetch	212	708	discard	256KB combined table with 8x scalar prefetch per iter. Prefetch overhead > savings from eliminating RC/canonical.
+inline_kernel	192	783	keep	#[inline(always)] on simd_kernel. Eliminates function call overhead. ~3.5% improvement.
+unroll_by_2	202	742	discard	Unroll Phase 4a by 2. Compiler already handles this. No improvement.
+inline_caller	223	672	discard	#[inline(always)] on prepare_and_run_kernel. Icache pressure regression.
+xor_complement	204	735	discard	vpxor instead of vpsubd for complement. Compiler scheduled fine with vpsubd.
+align_ring_64	206	729	discard	Cache-line aligned ring buffer. No clear improvement.
+2deep_pipeline	crash	crash	crash	2-iteration pipeline delay. Off-by-one in window fill caused test failures.
+slli_syncmer_trick	192	783	discard	slli(shifted,31)+andnot replaces and+cmpeq+andnot. Within noise.
+2pass_kernel	228	658	discard	Separate score computation pass + window pass. Extra memory traffic kills it.
+inline_kernel	192	783	keep	#[inline(always)] on simd_kernel.
+inline_caller	223	672	discard	#[inline(always)] on prepare_and_run_kernel. Icache pressure.
+xor_complement	204	735	discard	vpxor instead of vpsubd for complement.
+aligned_ring	206	729	discard	Cache-line aligned ring buffer.
+inline_change_detect	217	691	discard	Inline change detection replaces deferred. Critical path extended.
+unlikely_suffix	210	714	discard	core::intrinsics::unlikely on suffix recomp branch. Hurt.
+codegen_units_1	190	790	keep	codegen-units=1 in Cargo.toml profile.
+pgo	183	820	note	PGO gives 5% but impractical for library users.
+simd_16x	175	857	keep	Simd16xExtractor: 2 back-to-back batches, warm L1 cache.
+inline_prepare_packed	172	872	keep	#[inline(always)] on prepare_packed.
+inline_pack_seq_2bit	169	887	keep	#[inline(always)] on pack_seq_2bit.
+simd_32x	178	845	discard	4 batches of 8. No improvement over 16x.
+inline_materialize	172	873	discard	#[inline(always)] on materialize_from_changes. Already auto-inlined.
