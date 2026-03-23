@@ -565,6 +565,7 @@ impl SimdBatchExtractor {
 
     #[cfg(target_arch = "x86_64")]
     #[target_feature(enable = "avx2")]
+    #[inline(always)]
     unsafe fn prepare_packed(&mut self, seqs: &[&[u8]; 8]) {
         let mut max_len = 0;
         for s in seqs { if s.len() > max_len { max_len = s.len(); } }
