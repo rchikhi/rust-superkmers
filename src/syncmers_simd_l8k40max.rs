@@ -466,7 +466,7 @@ fn materialize_from_changes(
 // Public API
 // ---------------------------------------------------------------------------
 
-pub struct SimdBatchExtractor {
+pub struct SimdBatchExtractor8 {
     k: usize,
     l: usize,
     packed_buf: Vec<u8>,
@@ -477,14 +477,14 @@ pub struct SimdBatchExtractor {
     superkmers: [Vec<Superkmer>; 8],
 }
 
-impl SimdBatchExtractor {
+impl SimdBatchExtractor8 {
     pub fn new(k: usize, l: usize) -> Self {
         // Pre-allocate for 8 × 300bp reads
         let max_read = 300;
         let ps_uniform = ((max_read + 3) / 4 + 32 + 31) & !31;
         let max_kmers = max_read - k + 1;
         let max_lmers = max_read - l + 1;
-        SimdBatchExtractor {
+        SimdBatchExtractor8 {
             k, l,
             packed_buf: vec![0u8; 8 * ps_uniform + 32],
             packed_stride: ps_uniform,
@@ -587,3 +587,40 @@ impl SimdBatchExtractor {
         }
     }
 }
+
+/// Process 16 reads at a time (2 × 8 lanes). Keeps L1 cache warm across batches.
+/// Same API shape as SimdBatchExtractor8 but takes `[&[u8]; 16]`.
+pub struct SimdBatchExtractor16 {
+    a: SimdBatchExtractor8,
+    b: SimdBatchExtractor8,
+}
+
+impl SimdBatchExtractor16 {
+    pub fn new(k: usize, l: usize) -> Self {
+        SimdBatchExtractor16 {
+            a: SimdBatchExtractor8::new(k, l),
+            b: SimdBatchExtractor8::new(k, l),
+        }
+    }
+
+    /// Process 16 reads. Returns (results_0_7, results_8_15).
+    /// Access individual read results via `.0[lane]` or `.1[lane]`.
+    #[cfg(target_arch = "x86_64")]
+    #[target_feature(enable = "avx2")]
+    pub unsafe fn process_batch(&mut self, seqs: &[&[u8]; 16]) -> (&[Vec<Superkmer>; 8], &[Vec<Superkmer>; 8]) {
+        // Zero-copy split: &[&[u8]; 16] → two &[&[u8]; 8] via pointer cast
+        let ptr = seqs.as_ptr() as *const [&[u8]; 8];
+        let ra = self.a.process_batch(&*ptr);
+        let rb = self.b.process_batch(&*ptr.add(1));
+        (ra, rb)
+    }
+
+    /// Access packed storage for a read (0..15).
+    pub fn packed_storage(&self, lane: usize) -> &[u8] {
+        if lane < 8 { self.a.packed_storage(lane) }
+        else { self.b.packed_storage(lane - 8) }
+    }
+}
+
+// Keep old names as aliases for backwards compatibility
+pub type SimdBatchExtractor = SimdBatchExtractor8;
