@@ -52,6 +52,7 @@ fn pack_base(b: u8) -> u8 {
 /// Uses AVX2 when available for 32-byte chunks.
 #[cfg(target_arch = "x86_64")]
 #[target_feature(enable = "avx2")]
+#[inline(always)]
 unsafe fn pack_seq_2bit(seq: &[u8], out: &mut [u8]) {
     let len = seq.len();
     let mut i = 0;
