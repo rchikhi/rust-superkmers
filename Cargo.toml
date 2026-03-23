@@ -35,7 +35,8 @@ simd-minimizers = { git = "https://github.com/rchikhi/simd-minimizers-cpp", bran
 name = "bench"
 harness = false
 
-#[profile.release]
+[profile.release]
+codegen-units = 1
 #debug = true # for callgrind
 
 [profile.bench]

@@ -207,7 +207,7 @@ unsafe fn simd_kernel(
     let mut prev_pos = _mm256_setzero_si256();
 
     // Minimizer sliding window (two-stack) — STACK array, no heap indirection
-    assert!(w <= 32, "window size must be <= 32");
+    debug_assert!(w <= 32, "window size must be <= 32");
     let mut ring = [all_ones; 32]; // fixed-size stack array (max w=32)
     let mut prefix_min = all_ones;
     let mut ring_idx = 0usize;
