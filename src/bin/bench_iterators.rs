@@ -312,6 +312,32 @@ fn main() {
             });
         }
 
+        // UHS SIMD batch l=8
+        {
+            let mut ext_uhs_simd = rust_superkmers::uhs_simd_l8k40max::SimdBatchExtractor::new(k, 8);
+            let name = "uhs-simd-ext (l=8)";
+            if filter_ref.map_or(true, |pat| name.contains(pat)) {
+                let seq_len = seqs[0].len();
+                let batch_iters = (iters / 8).max(1);
+                let mut batch_arr: [&[u8]; 8] = [&[]; 8];
+                for _ in 0..3 {
+                    for j in 0..8 { batch_arr[j] = &seqs[j % seqs.len()]; }
+                    unsafe { ext_uhs_simd.process_batch(&batch_arr) };
+                }
+                let start = Instant::now();
+                for i in 0..batch_iters {
+                    for j in 0..8 { batch_arr[j] = &seqs[(i as usize * 8 + j) % seqs.len()]; }
+                    let sks = unsafe { ext_uhs_simd.process_batch(&batch_arr) };
+                    std::hint::black_box(sks);
+                }
+                let elapsed = start.elapsed();
+                let total_reads = batch_iters as u64 * 8;
+                let ns_per_read = elapsed.as_nanos() as f64 / total_reads as f64;
+                let mb_per_sec = seq_len as f64 / ns_per_read * 1000.0;
+                println!("{:25} {:10.0} ns    {:8.1} MB/s", name, ns_per_read, mb_per_sec);
+            }
+        }
+
         // SIMD batch l=9
         {
             let mut ext_simd9 = rust_superkmers::syncmers_simd_l9k41max::SimdBatchExtractor::new(k, 9);

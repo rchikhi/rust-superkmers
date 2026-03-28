@@ -1255,6 +1255,37 @@ mod simd_batch {
         }
     }
 
+    // === Compare SIMD vs scalar (must be identical) ===
+
+    #[test]
+    fn test_simd_batch_matches_scalar_syncmers2_mspxor() {
+        let k = 31;
+        let l = 8;
+        let mut simd_ext = rust_superkmers::syncmers_simd_l8k40max::SimdBatchExtractor::new(k, l);
+        let mut scalar_ext = rust_superkmers::iteratorsyncmers2::SuperkmerExtractor::mspxor(k, l);
+
+        for seed in 0..50 {
+            let seq = random_dna(150, 42 + seed);
+            let batch: [&[u8]; 8] = [&seq; 8];
+            let simd_sks = unsafe { simd_ext.process_batch(&batch) };
+            let scalar_sks = scalar_ext.process(&seq);
+
+            assert_eq!(simd_sks[0].len(), scalar_sks.len(),
+                "seed={}: superkmer count mismatch: simd={} scalar={}",
+                seed, simd_sks[0].len(), scalar_sks.len());
+            for (i, (s, r)) in simd_sks[0].iter().zip(scalar_sks.iter()).enumerate() {
+                assert_eq!(s.start, r.start,
+                    "seed={} sk={}: start mismatch simd={} scalar={}", seed, i, s.start, r.start);
+                assert_eq!(s.size, r.size,
+                    "seed={} sk={}: size mismatch simd={} scalar={}", seed, i, s.size, r.size);
+                assert_eq!(s.mpos, r.mpos,
+                    "seed={} sk={}: mpos mismatch simd={} scalar={}", seed, i, s.mpos, r.mpos);
+                assert_eq!(s.mint, r.mint,
+                    "seed={} sk={}: mint mismatch simd={} scalar={}", seed, i, s.mint, r.mint);
+            }
+        }
+    }
+
     // === l=9 tests ===
 
     #[test]
@@ -1290,6 +1321,87 @@ mod simd_batch {
             for lane in 0..8 {
                 check_tiling(&results[lane], seq.len(), k);
             }
+        }
+    }
+
+    // === UHS SIMD tests ===
+
+    #[test]
+    fn test_uhs_simd_tiling_150bp() {
+        let k = 31;
+        let l = 8;
+        let mut ext = rust_superkmers::uhs_simd_l8k40max::SimdBatchExtractor::new(k, l);
+
+        for seed in 0..100 {
+            let seq = random_dna(150, 42 + seed);
+            let batch: [&[u8]; 8] = [&seq; 8];
+            let results = unsafe { ext.process_batch(&batch) };
+            for lane in 0..8 {
+                check_tiling(&results[lane], seq.len(), k);
+            }
+            for lane in 1..8 {
+                assert_eq!(results[0].len(), results[lane].len(),
+                    "uhs seed={} lane {} count mismatch", seed, lane);
+            }
+        }
+    }
+
+    #[test]
+    fn test_uhs_simd_matches_scalar_uhs_mspxor() {
+        let k = 31;
+        let l = 8;
+        let mut simd_ext = rust_superkmers::uhs_simd_l8k40max::SimdBatchExtractor::new(k, l);
+        let mut scalar_ext = rust_superkmers::iteratoruhs::SuperkmerExtractor::mspxor(k, l);
+
+        for seed in 0..50 {
+            let seq = random_dna(150, 42 + seed);
+            let batch: [&[u8]; 8] = [&seq; 8];
+            let simd_sks = unsafe { simd_ext.process_batch(&batch) };
+            let scalar_sks = scalar_ext.process(&seq);
+
+            assert_eq!(simd_sks[0].len(), scalar_sks.len(),
+                "seed={}: superkmer count mismatch: simd={} scalar={}",
+                seed, simd_sks[0].len(), scalar_sks.len());
+            for (i, (s, r)) in simd_sks[0].iter().zip(scalar_sks.iter()).enumerate() {
+                assert_eq!(s.start, r.start,
+                    "seed={} sk={}: start mismatch simd={} scalar={}", seed, i, s.start, r.start);
+                assert_eq!(s.size, r.size,
+                    "seed={} sk={}: size mismatch simd={} scalar={}", seed, i, s.size, r.size);
+                assert_eq!(s.mpos, r.mpos,
+                    "seed={} sk={}: mpos mismatch simd={} scalar={}", seed, i, s.mpos, r.mpos);
+                assert_eq!(s.mint, r.mint,
+                    "seed={} sk={}: mint mismatch simd={} scalar={}", seed, i, s.mint, r.mint);
+            }
+        }
+    }
+
+    #[test]
+    fn test_uhs_simd_various_lengths() {
+        let k = 31;
+        let l = 8;
+        let mut ext = rust_superkmers::uhs_simd_l8k40max::SimdBatchExtractor::new(k, l);
+
+        for &len in &[50, 100, 150, 200, 300, 500] {
+            let seq = random_dna(len, 789 + len as u64);
+            let batch: [&[u8]; 8] = [&seq; 8];
+            let results = unsafe { ext.process_batch(&batch) };
+            for lane in 0..8 {
+                check_tiling(&results[lane], seq.len(), k);
+            }
+        }
+    }
+
+    #[test]
+    fn test_uhs_simd_different_reads() {
+        let k = 31;
+        let l = 8;
+        let mut ext = rust_superkmers::uhs_simd_l8k40max::SimdBatchExtractor::new(k, l);
+
+        let seqs: Vec<Vec<u8>> = (0..8).map(|i| random_dna(150, 300 + i)).collect();
+        let batch: [&[u8]; 8] = std::array::from_fn(|i| seqs[i].as_slice());
+        let results = unsafe { ext.process_batch(&batch) };
+        for lane in 0..8 {
+            check_tiling(&results[lane], seqs[lane].len(), k);
         }
     }
 }

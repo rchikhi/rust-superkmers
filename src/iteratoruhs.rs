@@ -21,14 +21,14 @@ use lazy_static::lazy_static;
 
 /// UHS ry patterns for l=7 (21 patterns, density 0.1640625, sparsity 6.095).
 /// Each pattern is l bits: r=0, y=1, MSB-first (leftmost letter = highest bit).
-const UHS_PATTERNS_7: &[u8] = &[
+pub const UHS_PATTERNS_7: &[u8] = &[
     0, 7, 8, 12, 13, 18, 19,
     20, 21, 22, 23, 51, 63, 71,
     83, 85, 107, 109, 115, 119, 127,
 ];
 
 /// UHS ry patterns for l=8 (39 patterns, density 0.15234375, sparsity 6.564).
-const UHS_PATTERNS_8: &[u16] = &[
+pub const UHS_PATTERNS_8: &[u16] = &[
     0, 8, 12, 13, 18, 22, 23, 28,
     29, 30, 31, 36, 38, 39, 40, 41,
     42, 43, 68, 70, 102, 103, 150, 151,
@@ -38,7 +38,7 @@ const UHS_PATTERNS_8: &[u16] = &[
 
 /// UHS ry patterns for l=9 (84 patterns, density 0.1640625, sparsity 6.095).
 /// RC-closed: includes every word's reverse-complement (Martin Frith, 2026-03).
-const UHS_PATTERNS_9: &[u16] = &[
+pub const UHS_PATTERNS_9: &[u16] = &[
     0, 2, 3, 30, 62, 66, 78,
     93, 126, 127, 130, 134, 136, 137,
     138, 139, 142, 146, 150, 154, 170,

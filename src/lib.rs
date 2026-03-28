@@ -20,6 +20,7 @@ pub mod iteratormultiminimizers;
 pub mod naivesyncmers;
 pub mod syncmers_simd_l8k40max;
 pub mod syncmers_simd_l9k41max;
+pub mod uhs_simd_l8k40max;
 use std::cmp::Ordering;
 use lazy_static::lazy_static;
 

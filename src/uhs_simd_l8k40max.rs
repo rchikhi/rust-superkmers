@@ -1,12 +1,10 @@
-//! SIMD 8-read batch closed syncmer extractor (AVX2, l=8, k≤40, s=2, mspxor).
+//! SIMD 8-read batch UHS ry-alphabet extractor (AVX2, l=8, k≤40, mspxor).
 //!
-//! Processes 8 short reads simultaneously using AVX2 SIMD. Syncmer status
-//! is determined by an 8KB bit table lookup via SIMD gather (L1-resident,
-//! latency hidden by software pipelining). A single two-stack sliding window
-//! performs minimizer selection with mspxor tiebreaking.
+//! Uses Martin Frith's ry-alphabet UHS patterns. The scoring table has only
+//! 2^l entries (256 for l=8 = 32 bytes, fits ONE cache line) instead of
+//! 4^l entries. Rolling ry pattern (1 bit/base) indexes the table directly.
 //!
-//! Constraints: l=8, k≤40, s=2, reads ≤32KB. Results match syncmers2-ext:mspxor.
-//! ~800 MB/s at 150bp (2× scalar).
+//! Constraints: l=8, k≤40, reads ≤32KB. Results match scalar uhs-ext:mspxor.
 //!
 //! Requires AVX2.
 
@@ -18,27 +16,46 @@ use crate::minimizer_core::{canonical_table, base_from_ascii};
 use lazy_static::lazy_static;
 
 // ---------------------------------------------------------------------------
-// 8KB syncmer bit table
+// RY-alphabet UHS byte table (32 bytes for l=8, 64 bytes for l=9)
 // ---------------------------------------------------------------------------
 
-/// 8KB syncmer bit table: bit N set if l-mer N's CANONICAL form is a closed syncmer.
-/// Uses canonical syncmer status so fwd/RC pairs get the same priority (context-independent).
-fn generate_syncmer_bit_table(l: usize) -> Vec<u8> {
-    let scores = crate::iteratorsyncmers2::generate_syncmer_scores_with_s(l, 2);
-    let canon_table = crate::minimizer_core::canonical_table(l);
-    let num_lmers = 1 << (2 * l);
-    let mut bits = vec![0u8; num_lmers / 8];
-    for lmer in 0..num_lmers {
-        let (canon_val, _) = canon_table[lmer];
-        if scores[canon_val as usize] == 0 {
-            bits[lmer / 8] |= 1 << (lmer % 8);
-        }
+/// Reverse-complement an ry pattern of length l.
+/// In ry alphabet: r↔y complement, then reverse.
+fn ry_reverse_complement(ry: usize, l: usize) -> usize {
+    let mut rc = 0usize;
+    let mut v = ry;
+    for _ in 0..l {
+        rc = (rc << 1) | (1 - (v & 1)); // complement: r(0)↔y(1)
+        v >>= 1;
     }
-    bits
+    rc
+}
+
+/// Generate a byte table indexed by ry pattern: 1 = UHS member, 0 = not.
+/// Both forward and RC ry patterns are marked (ensures canonical symmetry).
+fn generate_ry_uhs_table(l: usize) -> Vec<u8> {
+    let num_ry = 1 << l;
+    let mut table = vec![0u8; num_ry];
+    match l {
+        7 => for &pat in crate::iteratoruhs::UHS_PATTERNS_7 {
+            table[pat as usize] = 1;
+            table[ry_reverse_complement(pat as usize, l)] = 1;
+        },
+        8 => for &pat in crate::iteratoruhs::UHS_PATTERNS_8 {
+            table[pat as usize] = 1;
+            table[ry_reverse_complement(pat as usize, l)] = 1;
+        },
+        9 => for &pat in crate::iteratoruhs::UHS_PATTERNS_9 {
+            table[pat as usize] = 1;
+            table[ry_reverse_complement(pat as usize, l)] = 1;
+        },
+        _ => panic!("UHS not defined for l={}", l),
+    }
+    table
 }
 
 lazy_static! {
-    static ref SYNCMER_BITS_8: Vec<u8> = generate_syncmer_bit_table(8);
+    static ref RY_UHS_TABLE_8: Vec<u8> = generate_ry_uhs_table(8);
 }
 
 // ---------------------------------------------------------------------------
@@ -148,7 +165,7 @@ unsafe fn simd_kernel(
     packed_seqs: &[u8],
     packed_offsets: &[usize; 8],
     seq_lengths: &[usize; 8],
-    syncmer_bits: &[u8],       // 8KB bit table (L1 resident)
+    ry_uhs_table: &[u8],       // 32-byte ry-UHS byte table (single cache line)
     k: usize,
     l: usize,
     min_pos_buf: &mut [__m256i],
@@ -196,17 +213,19 @@ unsafe fn simd_kernel(
     debug_assert!(l == 8, "SIMD kernel currently only supports l=8");
     const RC_SHIFT: i32 = 14;
 
-    // Pre-hoisted constants (avoid per-iteration broadcasts)
+    // Pre-hoisted constants
     let one_vec = _mm256_set1_epi32(1);
-    let seven_vec = _mm256_set1_epi32(7);
     let pos_mask = _mm256_set1_epi32(0x7FFF);
     let sign_bit = _mm256_set1_epi32(0x80000000u32 as i32);
     let all_ones = _mm256_set1_epi32(-1i32);
     let xor_const_vec = _mm256_set1_epi32(xor_const);
+    let ry_mask = _mm256_set1_epi32((1i32 << l) - 1); // 0xFF for l=8
+
+    // Rolling ry pattern (1 bit per base: R=0, Y=1)
+    let mut rolling_ry = _mm256_setzero_si256();
 
     // Software-pipelined gather: buffer prev iteration's results
-    let mut prev_gather = _mm256_setzero_si256();
-    let mut prev_bit_idx = _mm256_setzero_si256();
+    let mut prev_is_uhs = _mm256_setzero_si256(); // gathered UHS status
     let mut prev_canon = _mm256_setzero_si256();
     let mut prev_pos = _mm256_setzero_si256();
 
@@ -238,7 +257,7 @@ unsafe fn simd_kernel(
         }};
     }
 
-    // Rolling fwd + RC (8 ops)
+    // Rolling fwd + RC (8 ops) + ry (3 ops)
     macro_rules! update_rolling {
         ($base:expr) => {{
             rolling_fwd = _mm256_and_si256(
@@ -250,39 +269,45 @@ unsafe fn simd_kernel(
                     _mm256_srli_epi32(rolling_rc, 2),
                     _mm256_slli_epi32(comp, RC_SHIFT)),
                 lmer_mask_vec);
+            // Rolling ry pattern: ry_bit = base & 1 (A,G→0=R, C,T→1=Y)
+            let ry_bit = _mm256_and_si256($base, one_vec);
+            rolling_ry = _mm256_and_si256(
+                _mm256_or_si256(_mm256_slli_epi32(rolling_ry, 1), ry_bit),
+                ry_mask);
         }};
     }
 
-    // Issue L1 gather + canonical + is_rc (3 ops + 1 gather + 3 ops off critical path)
-    let mut lmer_idx: usize = 0; // l-mer position counter for is_rc_buf
+    // Issue gather from 32-byte ry-UHS byte table + canonical + is_rc
+    // No bit extraction needed: table[ry] is 0 or 1 directly.
+    let mut lmer_idx: usize = 0;
     macro_rules! issue_gather {
         () => {{
-            let byte_idx = _mm256_srli_epi32(rolling_fwd, 3);
-            let bit_idx = _mm256_and_si256(rolling_fwd, seven_vec);
-            let gathered = _mm256_i32gather_epi32::<1>(
-                syncmer_bits.as_ptr() as *const i32, byte_idx);
+            // Gather from ry table (32 bytes, single cache line)
+            let is_uhs = _mm256_i32gather_epi32::<1>(
+                ry_uhs_table.as_ptr() as *const i32, rolling_ry);
             let canon = simd_min_u32(rolling_fwd, rolling_rc);
-            // is_rc: off critical path (canon and fwd ready early, result only needed in materialization)
+            // is_rc tracking
             let not_rc = _mm256_cmpeq_epi32(canon, rolling_fwd);
             let is_rc_mask = _mm256_xor_si256(not_rc, all_ones);
             *is_rc_buf.get_unchecked_mut(lmer_idx) =
                 _mm256_movemask_ps(_mm256_castsi256_ps(is_rc_mask)) as u8;
             lmer_idx += 1;
-            (gathered, bit_idx, canon)
+            (is_uhs, canon)
         }};
     }
 
-    // Build score from pipelined gather result (9 ops)
+    // Build score from pipelined gather result (6 ops)
+    // Trick: slli(is_uhs, 31) puts bit 0 at bit 31, all upper bits shift out.
+    // andnot(result, sign_bit): 0x80000000 if non-UHS (bit was 0), 0 if UHS (bit was 1).
     macro_rules! build_elem {
-        ($gather:expr, $bit_idx:expr, $canon:expr, $pos:expr) => {{
-            let shifted = _mm256_srlv_epi32($gather, $bit_idx);
-            let is_syncmer = _mm256_cmpeq_epi32(
-                _mm256_and_si256(shifted, one_vec), one_vec);
+        ($is_uhs:expr, $canon:expr, $pos:expr) => {{
+            let uhs_at_31 = _mm256_slli_epi32($is_uhs, 31);
+            let priority = _mm256_andnot_si256(uhs_at_31, sign_bit);
             let tb = _mm256_xor_si256($canon, xor_const_vec);
             let score = _mm256_or_si256(
                 _mm256_slli_epi32(tb, 15),
                 _mm256_and_si256($pos, pos_mask));
-            _mm256_or_si256(score, _mm256_andnot_si256(is_syncmer, sign_bit))
+            _mm256_or_si256(score, priority)
         }};
     }
 
@@ -313,8 +338,8 @@ unsafe fn simd_kernel(
     {
         let base = load_base!();
         update_rolling!(base);
-        let (g, bi, c) = issue_gather!();
-        prev_gather = g; prev_bit_idx = bi; prev_canon = c;
+        let (g, c) = issue_gather!();
+        prev_is_uhs = g; prev_canon = c;
         prev_pos = pos_vec;
         pos_vec = _mm256_add_epi32(pos_vec, one_vec);
     }
@@ -323,10 +348,10 @@ unsafe fn simd_kernel(
     for _ in 1..w {
         let base = load_base!();
         update_rolling!(base);
-        let (g, bi, c) = issue_gather!();
-        let elem = build_elem!(prev_gather, prev_bit_idx, prev_canon, prev_pos);
+        let (g, c) = issue_gather!();
+        let elem = build_elem!(prev_is_uhs, prev_canon, prev_pos);
         window_push!(elem);
-        prev_gather = g; prev_bit_idx = bi; prev_canon = c;
+        prev_is_uhs = g; prev_canon = c;
         prev_pos = pos_vec;
         pos_vec = _mm256_add_epi32(pos_vec, one_vec);
     }
@@ -338,9 +363,9 @@ unsafe fn simd_kernel(
     for q in 0..main_iters {
         let base = load_base!();
         update_rolling!(base);
-        let (g, bi, c) = issue_gather!();
+        let (g, c) = issue_gather!();
 
-        let elem = build_elem!(prev_gather, prev_bit_idx, prev_canon, prev_pos);
+        let elem = build_elem!(prev_is_uhs, prev_canon, prev_pos);
         window_push!(elem);
 
         let suf_min = ring[ring_idx];
@@ -348,22 +373,21 @@ unsafe fn simd_kernel(
         // Store FULL min_elem (not just position) — contains tiebreaker for materialization
         *min_pos_buf.get_unchecked_mut(q) = min_elem;
 
-        prev_gather = g; prev_bit_idx = bi; prev_canon = c;
+        prev_is_uhs = g; prev_canon = c;
         prev_pos = pos_vec;
         pos_vec = _mm256_add_epi32(pos_vec, one_vec);
     }
 
     // ===== Phase 4b: Flush =====
     for q in main_iters..num_queries {
-        let elem = build_elem!(prev_gather, prev_bit_idx, prev_canon, prev_pos);
+        let elem = build_elem!(prev_is_uhs, prev_canon, prev_pos);
         window_push!(elem);
 
         let suf_min = ring[ring_idx];
         let min_elem = simd_min_u32(prefix_min, suf_min);
         *min_pos_buf.get_unchecked_mut(q) = min_elem;
 
-        prev_gather = _mm256_setzero_si256();
-        prev_bit_idx = _mm256_setzero_si256();
+        prev_is_uhs = _mm256_setzero_si256();
         prev_canon = _mm256_setzero_si256();
         prev_pos = pos_vec;
         pos_vec = _mm256_add_epi32(pos_vec, one_vec);
@@ -541,7 +565,7 @@ impl SimdBatchExtractor {
             self.is_rc_buf.resize(max_lmers, 0);
         }
         simd_kernel(&self.packed_buf, &packed_offsets, &seq_lengths,
-            &SYNCMER_BITS_8, self.k, self.l, &mut self.min_pos_buf,
+            &RY_UHS_TABLE_8, self.k, self.l, &mut self.min_pos_buf,
             &mut self.is_rc_buf, &mut self.changes);
         seq_lengths
     }
