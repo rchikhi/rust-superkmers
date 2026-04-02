@@ -87,6 +87,7 @@ pub fn canonical_table(l: usize) -> &'static [(u32, bool)] {
         8 => &*crate::CANONICAL_8,
         9 => &*crate::CANONICAL_9,
         10 => &*crate::CANONICAL_10,
+        11 => &*crate::CANONICAL_11,
         12 => &*crate::CANONICAL_12,
         _ => panic!("Unsupported l={} for canonical lookup", l),
     }

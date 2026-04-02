@@ -27,13 +27,12 @@ pub const UHS_PATTERNS_7: &[u8] = &[
     83, 85, 107, 109, 115, 119, 127,
 ];
 
-/// UHS ry patterns for l=8 (39 patterns, density 0.15234375, sparsity 6.564).
+/// UHS ry patterns for l=8 (40 patterns, density 0.15625, sparsity 6.4).
+/// RC-closed: includes every word's reverse-complement (Martin Frith, 2026-03).
 pub const UHS_PATTERNS_8: &[u16] = &[
-    0, 8, 12, 13, 18, 22, 23, 28,
-    29, 30, 31, 36, 38, 39, 40, 41,
-    42, 43, 68, 70, 102, 103, 150, 151,
-    169, 170, 171, 198, 211, 214, 215, 219,
-    221, 222, 223, 230, 231, 251, 255,
+    0, 4, 6, 10, 14, 15, 22, 23, 36, 74, 76, 77, 78, 132, 134, 136,
+    138, 140, 141, 142, 143, 150, 151, 158, 159, 170, 172, 173, 174,
+    175, 202, 204, 205, 206, 212, 219, 222, 223, 238, 255,
 ];
 
 /// UHS ry patterns for l=9 (84 patterns, density 0.1640625, sparsity 6.095).
@@ -51,6 +50,23 @@ pub const UHS_PATTERNS_9: &[u16] = &[
     379, 380, 381, 382, 383, 386, 388,
     389, 390, 393, 398, 402, 405, 406,
     409, 410, 444, 453, 462, 477, 511,
+];
+
+/// UHS ry patterns for l=11 (288 patterns, density 0.140625, sparsity 7.111).
+/// Martin Frith, 2026-03.
+pub const UHS_PATTERNS_11: &[u16] = &[
+    0, 2, 3, 14, 60, 61, 62, 70, 71, 76, 77, 126, 165, 188, 198, 221,
+    222, 238, 254, 261, 267, 268, 269, 312, 326, 341, 350, 357, 362, 372,
+    373, 378, 380, 382, 402, 410, 510, 520, 521, 524, 525, 526, 528, 530,
+    532, 540, 541, 542, 544, 545, 548, 549, 550, 570, 572, 581, 586, 588,
+    589, 620, 626, 630, 632, 633, 636, 638, 646, 650, 664, 666, 682, 690,
+    692, 708, 709, 716, 722, 726, 728, 730, 732, 738, 740, 748, 750, 762,
+    766, 772, 780, 796, 838, 894, 908, 1024, 1026, 1028, 1030, 1032,
+    1034, 1036, 1038, 1058, 1066, 1084, 1092, 1094, 1142, 1148, 1164,
+    1170, 1188, 1202, 1212, 1222, 1228, 1244, 1256, 1258, 1268, 1308,
+    1316, 1330, 1332, 1336, 1354, 1362, 1372, 1396, 1404, 1420, 1426,
+    1468, 1484, 1548, 1552, 1556, 1564, 1572, 1592, 1612, 1648, 1656,
+    1688, 1784,
 ];
 
 /// Convert an l-mer integer to its ry pattern.
@@ -71,6 +87,7 @@ fn is_uhs_pattern(ry: usize, l: usize) -> bool {
         7 => UHS_PATTERNS_7.contains(&(ry as u8)),
         8 => UHS_PATTERNS_8.contains(&(ry as u16)),
         9 => UHS_PATTERNS_9.contains(&(ry as u16)),
+        11 => UHS_PATTERNS_11.contains(&(ry as u16)),
         _ => panic!("UHS not defined for l={}", l),
     }
 }
@@ -132,9 +149,11 @@ lazy_static! {
     static ref UHS_SCORES_7: Vec<ScoreType> = generate_uhs_scores(7);
     static ref UHS_SCORES_8: Vec<ScoreType> = generate_uhs_scores(8);
     static ref UHS_SCORES_9: Vec<ScoreType> = generate_uhs_scores(9);
+    static ref UHS_SCORES_11: Vec<ScoreType> = generate_uhs_scores(11);
     static ref UHS_MSPXOR_SCORES_7: Vec<ScoreType> = generate_uhs_mspxor_scores(7);
     static ref UHS_MSPXOR_SCORES_8: Vec<ScoreType> = generate_uhs_mspxor_scores(8);
     static ref UHS_MSPXOR_SCORES_9: Vec<ScoreType> = generate_uhs_mspxor_scores(9);
+    static ref UHS_MSPXOR_SCORES_11: Vec<ScoreType> = generate_uhs_mspxor_scores(11);
 }
 
 fn uhs_scores(l: usize) -> &'static [ScoreType] {
@@ -142,6 +161,7 @@ fn uhs_scores(l: usize) -> &'static [ScoreType] {
         7 => &UHS_SCORES_7[..],
         8 => &UHS_SCORES_8[..],
         9 => &UHS_SCORES_9[..],
+        11 => &UHS_SCORES_11[..],
         _ => panic!("UHS not defined for l={}", l),
     }
 }
@@ -151,6 +171,7 @@ pub fn uhs_mspxor_scores(l: usize) -> &'static [ScoreType] {
         7 => &UHS_MSPXOR_SCORES_7[..],
         8 => &UHS_MSPXOR_SCORES_8[..],
         9 => &UHS_MSPXOR_SCORES_9[..],
+        11 => &UHS_MSPXOR_SCORES_11[..],
         _ => panic!("UHS not defined for l={}", l),
     }
 }

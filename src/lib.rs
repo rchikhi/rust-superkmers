@@ -58,6 +58,7 @@ lazy_static! {
     pub static ref CANONICAL_8: Vec<(u32, bool)> = generate_canonical_table::<8>();
     pub static ref CANONICAL_9: Vec<(u32, bool)> = generate_canonical_table::<9>();
     pub static ref CANONICAL_10: Vec<(u32, bool)> = generate_canonical_table::<10>();
+    pub static ref CANONICAL_11: Vec<(u32, bool)> = generate_canonical_table::<11>();
     pub static ref CANONICAL_12: Vec<(u32, bool)> = generate_canonical_table::<12>();
 }
 
